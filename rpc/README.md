@@ -4,15 +4,7 @@ Execute shell commands on a remote machine over any Somewear link (satellite, Wi
 
 ## Architecture
 
-```
-Local machine                  Somewear network              Remote machine
-─────────────────────────────────────────────────────────────────────────────
-rpc shell ──► Beam REST ──► IPv4Datagram (Exec request) ──► Beam daemon
-    ▲                                                              │
-    │                                                         rpc server
-    │                                                              │
-    └──────── webhook ◄──── IPv4Datagram (Exec response) ◄────────┘
-```
+<img width="3180" height="1827" alt="image" src="https://github.com/user-attachments/assets/898cf5a9-42f9-490e-81be-f276ca9f0e1e" />
 
 ## Wire format
 
