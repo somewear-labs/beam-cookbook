@@ -51,14 +51,28 @@ See [`proto/rpc.proto`](./proto/rpc.proto) for the full schema.
 ./rpc send --workspace 39054 "df -h"
 ```
 
+## Supported platforms
+
+| Platform | Architecture | `make` target |
+|----------|-------------|---------------|
+| macOS | ARM64 (Apple Silicon) | `make build` |
+| macOS | x86_64 | `make build` |
+| Linux | ARM64 / aarch64 | `make build-linux` |
+| Linux | x86_64 | `GOARCH=amd64 make build-linux` |
+
+The `rpc server` binary deployed to a remote machine must match that machine's OS and CPU architecture. Cross-compilation is handled entirely by the Go toolchain — no native cross-compiler required.
+
 ## Build
 
 ```bash
-# macOS (local)
+# macOS (local, auto-detects ARM64 or x86_64)
 make build
 
-# Linux ARM64 (remote)
+# Linux ARM64 / aarch64 (e.g. Raspberry Pi, NVIDIA Jetson)
 make build-linux
+
+# Linux x86_64
+GOARCH=amd64 make build-linux
 
 # Push linux binary to remote over SSH
 make push
