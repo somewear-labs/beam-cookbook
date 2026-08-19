@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package somewear.rpc;
+option go_package = "somewear/rpc/proto;rpcpb";
+
+// Envelope is the top-level payload carried inside every IPv4Datagram.
+// request_id correlates async responses back to their originating request.
+// namespace must equal EnvelopeNamespace; packets without it are discarded.
+message Envelope {
+  string namespace   = 1;
+  uint32 request_id  = 2;
+  oneof payload {
+    RpcRequest  request  = 3;
+    RpcResponse response = 4;
+  }
+}
+
+// RpcRequest carries a single method call. Add new methods here as a new oneof field.
+message RpcRequest {
+  oneof method {
+    ExecRequest exec = 1;
+  }
+}
+
+// RpcResponse carries the result of an RpcRequest or a transport-level error.
+message RpcResponse {
+  oneof result {
+    ExecResponse exec  = 1;
+    RpcError     error = 2;
+  }
+}
+
+// --- Exec ---
+
+message ExecRequest {
+  string command = 1;
+}
+
+message ExecResponse {
+  string output    = 1;
+  int32  exit_code = 2;
+  bool   truncated = 3;
+}
+
+// --- Error ---
+
+message RpcError {
+  string message = 1;
+}
