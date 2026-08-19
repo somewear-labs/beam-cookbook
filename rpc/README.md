@@ -31,23 +31,77 @@ message Envelope {
 
 See [`proto/rpc.proto`](./proto/rpc.proto) for the full schema.
 
+## Network setup
+
+Both machines must be signed in to Beam and joined to the same Somewear workspace. The workspace ID is embedded in every IPv4Datagram — packets sent from one workspace are only delivered to nodes in the same workspace.
+
+### 1. Find and activate the workspace on each machine
+
+```bash
+# List available workspaces and their IDs
+beam workspace list
+
+# Activate the shared workspace (do this on both machines)
+beam workspace activate --name "My Workspace"
+# or by ID:
+beam workspace activate --id 39054
+```
+
+Note the workspace ID — you'll pass it to `rpc` via `--workspace`.
+
+### 2. Configure Beam webhook on the remote machine
+
+Beam must forward inbound IPv4Datagrams to `rpc server` via webhook. Choose any free port (e.g. 8081):
+
+```bash
+beam config set webhook-address http://localhost:8081
+```
+
+Then restart the Beam daemon if it is already running.
+
+### 3. Configure Beam webhook on the local machine
+
+The local Beam daemon must forward response packets to `rpc shell`. Use the same port you'll pass to `--webhook-port` (default 8080):
+
+```bash
+beam config set webhook-address http://localhost:8080
+```
+
+### 4. Start `rpc server` on the remote machine
+
+```bash
+./rpc server --port 8081 --workspace 39054
+```
+
+`--port` must match the webhook address you set in step 2. `--workspace` must match the activated workspace ID.
+
+### 5. Start `rpc shell` on the local machine
+
+```bash
+./rpc shell --webhook-port 8080 --workspace 39054
+```
+
+`--webhook-port` must match the webhook address you set in step 3.
+
+---
+
 ## Usage
 
 ### Remote machine
 ```bash
-./rpc server
-./rpc server --port 9091 --workspace 39054 --max-response 500
+./rpc server --port 8081 --workspace 39054
+./rpc server --port 8081 --workspace 39054 --max-response 500
 ```
 
 ### Local machine — interactive shell
 ```bash
-./rpc shell
-./rpc shell --webhook-port 8080 --timeout 30s
+./rpc shell --webhook-port 8080 --workspace 39054
+./rpc shell --webhook-port 8080 --workspace 39054 --timeout 30s
 ```
 
 ### Local machine — one-shot send
 ```bash
-./rpc send "uptime"
+./rpc send --workspace 39054 "uptime"
 ./rpc send --workspace 39054 "df -h"
 ```
 
