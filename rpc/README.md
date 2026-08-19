@@ -53,19 +53,21 @@ See [`proto/rpc.proto`](./proto/rpc.proto) for the full schema.
 
 ## Supported platforms
 
-| Platform | Architecture | `make` target |
-|----------|-------------|---------------|
-| macOS | ARM64 (Apple Silicon) | `make build` |
-| macOS | x86_64 | `make build` |
-| Linux | ARM64 / aarch64 | `make build-linux` |
-| Linux | x86_64 | `GOARCH=amd64 make build-linux` |
+Pre-built binaries are in [`bin/`](./bin). Pick the one matching the target machine.
 
-The `rpc server` binary deployed to a remote machine must match that machine's OS and CPU architecture. Cross-compilation is handled entirely by the Go toolchain — no native cross-compiler required.
+| OS | Architecture | Binary |
+|----|-------------|--------|
+| Linux | ARM64 / aarch64 | [`bin/rpc_linux_arm64`](./bin/rpc_linux_arm64) |
+| Linux | x86\_64 | [`bin/rpc_linux_amd64`](./bin/rpc_linux_amd64) |
+| macOS | Apple Silicon (ARM64) | [`bin/rpc_darwin_arm64`](./bin/rpc_darwin_arm64) |
+| macOS | Intel (x86\_64) | [`bin/rpc_darwin_amd64`](./bin/rpc_darwin_amd64) |
 
-## Build
+The `rpc server` binary on the remote machine must match that machine's OS and CPU. Cross-compilation is handled entirely by the Go toolchain — no native cross-compiler required.
+
+## Build from source
 
 ```bash
-# macOS (local, auto-detects ARM64 or x86_64)
+# macOS (auto-detects ARM64 or x86_64)
 make build
 
 # Linux ARM64 / aarch64 (e.g. Raspberry Pi, NVIDIA Jetson)
