@@ -45,7 +45,10 @@ func runShell(args []string) {
 	}()
 
 	fmt.Printf("Somewear remote shell — workspace %d, webhook :%d\n", *workspace, *webhookPort)
-	fmt.Println("Ctrl-C or 'exit' to quit.\n")
+	fmt.Println("Ctrl-C or 'exit' to quit.")
+	fmt.Println()
+
+	doConnect(*beamURL, *workspace, *timeout, &nextID, &pendingID, responses)
 
 	scanner := bufio.NewScanner(os.Stdin)
 	for {
@@ -111,7 +114,98 @@ func runShell(args []string) {
 			close(stopTicker)
 			fmt.Printf("\r  %.2fs — [no response]\n", time.Since(start).Seconds())
 		}
+		// Clear pendingID so Beam webhook retries between commands don't
+		// queue a stale response for the next command's select.
+		pendingID.Store(0)
 	}
+}
+
+const (
+	colorReset  = "\033[0m"
+	colorBold   = "\033[1m"
+	colorCyan   = "\033[36m"
+	colorGreen  = "\033[32m"
+	colorYellow = "\033[33m"
+	colorDim    = "\033[2m"
+)
+
+func doConnect(beamURL string, workspace int, timeout time.Duration, nextID, pendingID *atomic.Uint32, responses chan *rpcpb.Envelope) {
+	id := nextID.Add(1)
+	pendingID.Store(id)
+	defer pendingID.Store(0)
+
+	env := &rpcpb.Envelope{
+		RequestId: id,
+		Payload: &rpcpb.Envelope_Request{
+			Request: &rpcpb.RpcRequest{
+				Method: &rpcpb.RpcRequest_Connect{
+					Connect: &rpcpb.ConnectRequest{},
+				},
+			},
+		},
+	}
+	b64, err := marshalEnvelope(env)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "[connect encode error]", err)
+		return
+	}
+	if err := sendIPv4(beamURL, workspace, b64); err != nil {
+		fmt.Fprintln(os.Stderr, "[connect send error]", err)
+		return
+	}
+
+	fmt.Printf("%s%sconnecting...%s", colorDim, colorCyan, colorReset)
+
+	select {
+	case resp := <-responses:
+		fmt.Print("\r\033[K") // clear the "connecting..." line
+		if c := resp.GetResponse().GetConnect(); c != nil {
+			printConnectBanner(c.Hostname, c.IpAddresses)
+		}
+	case <-time.After(timeout):
+		fmt.Printf("\r\033[K%s[no response — is the server running?]%s\n\n", colorYellow, colorReset)
+	}
+}
+
+func printConnectBanner(hostname string, ips []string) {
+	const inner = 44 // visible chars between the │ borders
+	bar := strings.Repeat("─", inner)
+
+	border := func(l, r string) {
+		fmt.Printf("%s%s%s%s%s%s\n", colorBold, colorCyan, l, bar, r, colorReset)
+	}
+	row := func(plain, colored string) {
+		pad := inner - len(plain)
+		if pad < 0 {
+			pad = 0
+		}
+		fmt.Printf("%s%s│%s%s%s%s%s│%s\n",
+			colorBold, colorCyan, colorReset,
+			colored, strings.Repeat(" ", pad),
+			colorBold, colorCyan, colorReset)
+	}
+	blank := func() {
+		fmt.Printf("%s%s│%*s│%s\n", colorBold, colorCyan, inner, "", colorReset)
+	}
+	label := func(k, v string) {
+		plain := fmt.Sprintf("  %-10s %s", k, v)
+		colored := fmt.Sprintf("  %s%-10s%s %s%s%s", colorDim, k, colorReset, colorGreen, v, colorReset)
+		row(plain, colored)
+	}
+
+	border("┌", "┐")
+	row(" connected", fmt.Sprintf(" %s%sconnected%s", colorBold, colorGreen, colorReset))
+	blank()
+	label("host", hostname)
+	for i, ip := range ips {
+		k := "ip"
+		if i > 0 {
+			k = ""
+		}
+		label(k, ip)
+	}
+	border("└", "┘")
+	fmt.Println()
 }
 
 func printResponse(env *rpcpb.Envelope) {

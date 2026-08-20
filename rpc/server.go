@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -73,6 +74,8 @@ func (s *rpcServer) handleRequest(env *rpcpb.Envelope) {
 	switch req.Method.(type) {
 	case *rpcpb.RpcRequest_Exec:
 		s.handleExec(env.RequestId, req.GetExec())
+	case *rpcpb.RpcRequest_Connect:
+		s.handleConnect(env.RequestId)
 	default:
 		s.sendError(env.RequestId, fmt.Sprintf("unknown method: %T", req.Method))
 	}
@@ -128,6 +131,55 @@ func (s *rpcServer) handleExec(reqID uint32, req *rpcpb.ExecRequest) {
 		return
 	}
 	fmt.Printf("  [req %d] Response sent, %d bytes, exit=%d\n", reqID, len(out), exitCode)
+}
+
+func (s *rpcServer) handleConnect(reqID uint32) {
+	hostname, _ := os.Hostname()
+
+	var ips []string
+	ifaces, _ := net.Interfaces()
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, _ := iface.Addrs()
+		for _, addr := range addrs {
+			var ip net.IP
+			switch v := addr.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			if ip != nil && ip.To4() != nil {
+				ips = append(ips, ip.String())
+			}
+		}
+	}
+
+	fmt.Printf("[connect] hostname=%s ips=%v\n", hostname, ips)
+
+	resp := &rpcpb.Envelope{
+		RequestId: reqID,
+		Payload: &rpcpb.Envelope_Response{
+			Response: &rpcpb.RpcResponse{
+				Result: &rpcpb.RpcResponse_Connect{
+					Connect: &rpcpb.ConnectResponse{
+						Hostname:    hostname,
+						IpAddresses: ips,
+					},
+				},
+			},
+		},
+	}
+	b64, err := marshalEnvelope(resp)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "  Failed to marshal connect response:", err)
+		return
+	}
+	if err := sendIPv4(s.beamURL, s.workspaceID, b64); err != nil {
+		fmt.Fprintln(os.Stderr, "  Failed to send connect response:", err)
+	}
 }
 
 func (s *rpcServer) sendError(reqID uint32, message string) {
