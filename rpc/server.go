@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync"
 
 	rpcpb "somewear/rpc/proto"
 )
@@ -25,10 +26,12 @@ func runServer(args []string) {
 	beamURL := fs.String("beam-url", defaultBeamURL, "Beam API URL for sending responses")
 	fs.Parse(args)
 
+	cwd, _ := os.Getwd()
 	s := &rpcServer{
 		workspaceID: *workspace,
 		maxResponse: *maxResponse,
 		beamURL:     *beamURL,
+		cwd:         cwd,
 	}
 
 	mux := http.NewServeMux()
@@ -48,6 +51,8 @@ type rpcServer struct {
 	workspaceID int
 	maxResponse int
 	beamURL     string
+	cwd         string
+	cwdMu       sync.Mutex
 }
 
 func (s *rpcServer) handleWebhook(w http.ResponseWriter, r *http.Request) {
@@ -84,9 +89,23 @@ func (s *rpcServer) handleRequest(env *rpcpb.Envelope) {
 }
 
 func (s *rpcServer) handleExec(reqID uint32, req *rpcpb.ExecRequest) {
-	fmt.Printf("[req %d] Exec: %q\n", reqID, req.Command)
+	s.cwdMu.Lock()
+	cwd := s.cwd
+	s.cwdMu.Unlock()
 
-	cmd := exec.Command("sh", "-c", req.Command)
+	fmt.Printf("[req %d] Exec (cwd=%s): %q\n", reqID, cwd, req.Command)
+
+	// Wrap the user command so that:
+	//   1. We start in the tracked cwd (best-effort; falls back to wherever we are if it's gone).
+	//   2. After the command we print a NUL sentinel + the new pwd to stdout so we
+	//      can capture directory changes (cd, pushd, etc.) without touching the
+	//      server process's own working directory.
+	wrapped := fmt.Sprintf(
+		"cd %s 2>/dev/null; { %s; }; __ec=$?; printf '\\000%%s' \"$(pwd)\"; exit $__ec",
+		shellQuote(cwd), req.Command,
+	)
+
+	cmd := exec.Command("sh", "-c", wrapped)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -98,7 +117,19 @@ func (s *rpcServer) handleExec(reqID uint32, req *rpcpb.ExecRequest) {
 		}
 	}
 
-	out := stdout.Bytes()
+	// Split stdout on the NUL sentinel to extract the new working directory.
+	stdoutBytes := stdout.Bytes()
+	if idx := bytes.IndexByte(stdoutBytes, 0); idx >= 0 {
+		newCwd := string(stdoutBytes[idx+1:])
+		if newCwd != "" {
+			s.cwdMu.Lock()
+			s.cwd = newCwd
+			s.cwdMu.Unlock()
+		}
+		stdoutBytes = stdoutBytes[:idx]
+	}
+
+	out := stdoutBytes
 	if len(out) == 0 {
 		out = stderr.Bytes()
 	}
@@ -189,6 +220,11 @@ func (s *rpcServer) handleConnect(reqID uint32) {
 	if err := sendIPv4(s.beamURL, s.workspaceID, b64); err != nil {
 		fmt.Fprintln(os.Stderr, "  Failed to send connect response:", err)
 	}
+}
+
+// shellQuote wraps s in single quotes, escaping any single quotes within.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 func collectCPUInfo() (arch, model string) {

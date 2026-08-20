@@ -172,7 +172,7 @@ func printConnectBanner(c *rpcpb.ConnectResponse) {
 	sep := fmt.Sprintf("  %s·%s  ", colorDim, colorReset)
 
 	// line 1: hostname + IPs
-	fmt.Printf("  %s%s%s", colorBold, c.Hostname, colorReset)
+	fmt.Printf("  %shost%s  %s%s%s", colorDim, colorReset, colorBold, c.Hostname, colorReset)
 	for _, ip := range c.IpAddresses {
 		fmt.Printf("%s%s%s%s", sep, colorGreen, ip, colorReset)
 	}
