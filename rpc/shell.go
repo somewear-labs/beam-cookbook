@@ -127,6 +127,7 @@ const (
 	colorGreen  = "\033[32m"
 	colorYellow = "\033[33m"
 	colorDim    = "\033[2m"
+	colorBlue   = "\033[34m"
 )
 
 func doConnect(beamURL string, workspace int, timeout time.Duration, nextID, pendingID *atomic.Uint32, responses chan *rpcpb.Envelope) {
@@ -160,51 +161,39 @@ func doConnect(beamURL string, workspace int, timeout time.Duration, nextID, pen
 	case resp := <-responses:
 		fmt.Print("\r\033[K") // clear the "connecting..." line
 		if c := resp.GetResponse().GetConnect(); c != nil {
-			printConnectBanner(c.Hostname, c.IpAddresses)
+			printConnectBanner(c)
 		}
 	case <-time.After(timeout):
 		fmt.Printf("\r\033[K%s[no response — is the server running?]%s\n\n", colorYellow, colorReset)
 	}
 }
 
-func printConnectBanner(hostname string, ips []string) {
-	const inner = 44 // visible chars between the │ borders
-	bar := strings.Repeat("─", inner)
+func printConnectBanner(c *rpcpb.ConnectResponse) {
+	sep := fmt.Sprintf("  %s·%s  ", colorDim, colorReset)
 
-	border := func(l, r string) {
-		fmt.Printf("%s%s%s%s%s%s\n", colorBold, colorCyan, l, bar, r, colorReset)
+	// line 1: hostname + IPs
+	fmt.Printf("  %s%s%s", colorBold, c.Hostname, colorReset)
+	for _, ip := range c.IpAddresses {
+		fmt.Printf("%s%s%s%s", sep, colorGreen, ip, colorReset)
 	}
-	row := func(plain, colored string) {
-		pad := inner - len(plain)
-		if pad < 0 {
-			pad = 0
-		}
-		fmt.Printf("%s%s│%s%s%s%s%s│%s\n",
-			colorBold, colorCyan, colorReset,
-			colored, strings.Repeat(" ", pad),
-			colorBold, colorCyan, colorReset)
+	fmt.Println()
+
+	// line 2: arch + cpu
+	var chips []string
+	if c.Arch != "" {
+		chips = append(chips, fmt.Sprintf("%s%s%s", colorBlue, c.Arch, colorReset))
 	}
-	blank := func() {
-		fmt.Printf("%s%s│%*s│%s\n", colorBold, colorCyan, inner, "", colorReset)
+	if c.CpuModel != "" {
+		chips = append(chips, fmt.Sprintf("%s%s%s", colorDim, c.CpuModel, colorReset))
 	}
-	label := func(k, v string) {
-		plain := fmt.Sprintf("  %-10s %s", k, v)
-		colored := fmt.Sprintf("  %s%-10s%s %s%s%s", colorDim, k, colorReset, colorGreen, v, colorReset)
-		row(plain, colored)
+	if c.CpuCount > 0 {
+		chips = append(chips, fmt.Sprintf("%s%d cores%s", colorDim, c.CpuCount, colorReset))
+	}
+	if len(chips) > 0 {
+		fmt.Printf("  %s", strings.Join(chips, sep))
+		fmt.Println()
 	}
 
-	border("┌", "┐")
-	row(" connected", fmt.Sprintf(" %s%sconnected%s", colorBold, colorGreen, colorReset))
-	blank()
-	label("host", hostname)
-	for i, ip := range ips {
-		k := "ip"
-		if i > 0 {
-			k = ""
-		}
-		label(k, ip)
-	}
-	border("└", "┘")
 	fmt.Println()
 }
 

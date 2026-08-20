@@ -51,6 +51,9 @@ message ConnectRequest {}
 message ConnectResponse {
   string hostname = 1;
   repeated string ip_addresses = 2;
+  string arch = 3;
+  string cpu_model = 4;
+  int32  cpu_count = 5;
 }
 
 // --- Error ---

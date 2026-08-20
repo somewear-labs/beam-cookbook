@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"runtime"
+	"strings"
 
 	rpcpb "somewear/rpc/proto"
 )
@@ -157,7 +159,11 @@ func (s *rpcServer) handleConnect(reqID uint32) {
 		}
 	}
 
-	fmt.Printf("[connect] hostname=%s ips=%v\n", hostname, ips)
+	arch, cpuModel := collectCPUInfo()
+	cpuCount := int32(runtime.NumCPU())
+
+	fmt.Printf("[connect] hostname=%s ips=%v arch=%s cpu=%s cores=%d\n",
+		hostname, ips, arch, cpuModel, cpuCount)
 
 	resp := &rpcpb.Envelope{
 		RequestId: reqID,
@@ -167,6 +173,9 @@ func (s *rpcServer) handleConnect(reqID uint32) {
 					Connect: &rpcpb.ConnectResponse{
 						Hostname:    hostname,
 						IpAddresses: ips,
+						Arch:        arch,
+						CpuModel:    cpuModel,
+						CpuCount:    cpuCount,
 					},
 				},
 			},
@@ -180,6 +189,36 @@ func (s *rpcServer) handleConnect(reqID uint32) {
 	if err := sendIPv4(s.beamURL, s.workspaceID, b64); err != nil {
 		fmt.Fprintln(os.Stderr, "  Failed to send connect response:", err)
 	}
+}
+
+func collectCPUInfo() (arch, model string) {
+	// arch: prefer uname -m (gives "aarch64", "x86_64") over Go's runtime name
+	if out, err := exec.Command("uname", "-m").Output(); err == nil {
+		arch = strings.TrimSpace(string(out))
+	}
+	if arch == "" {
+		arch = runtime.GOARCH
+	}
+
+	// CPU model: try /proc/cpuinfo first (Linux), fall back to sysctl (macOS)
+	if data, err := os.ReadFile("/proc/cpuinfo"); err == nil {
+		for _, field := range []string{"Model name", "model name", "Hardware"} {
+			for _, line := range strings.Split(string(data), "\n") {
+				before, after, ok := strings.Cut(line, ":")
+				if ok && strings.TrimSpace(before) == field {
+					if v := strings.TrimSpace(after); v != "" {
+						return arch, v
+					}
+				}
+			}
+		}
+	}
+	if out, err := exec.Command("sysctl", "-n", "machdep.cpu.brand_string").Output(); err == nil {
+		if v := strings.TrimSpace(string(out)); v != "" {
+			return arch, v
+		}
+	}
+	return arch, ""
 }
 
 func (s *rpcServer) sendError(reqID uint32, message string) {
