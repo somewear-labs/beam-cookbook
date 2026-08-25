@@ -35,7 +35,8 @@ func TestShellSlashCommandsAreHandledLocally(t *testing.T) {
 
 func TestDoPingReportsRoundTrip(t *testing.T) {
 	requestSent := make(chan int64, 1)
-	send := func(_ string, workspace int, targetUserID int64, payload string) error {
+	route := sessionRoute{id: 77, channels: []rpcpb.SessionChannel{rpcpb.SessionChannel_RADIO}}
+	send := func(_ string, workspace int, targetUserID int64, payload string, channels []rpcpb.SessionChannel) error {
 		if workspace != 7 || targetUserID != 99 {
 			t.Errorf("send target = workspace %d, account %d", workspace, targetUserID)
 		}
@@ -48,6 +49,9 @@ func TestDoPingReportsRoundTrip(t *testing.T) {
 		if ping == nil {
 			t.Error("send payload is not PingRequest")
 			return nil
+		}
+		if envelope.GetSessionId() != route.id || !sameSessionChannels(channels, route.channels) {
+			t.Errorf("ping route = session %d, channels %v", envelope.GetSessionId(), channels)
 		}
 		requestSent <- ping.GetClientSendUnixMillis()
 		return nil
@@ -62,6 +66,7 @@ func TestDoPingReportsRoundTrip(t *testing.T) {
 		responsePackageSentAt := clientSentAt.Add(12 * time.Millisecond).Truncate(time.Second)
 		responses <- inboundEnvelope{envelope: &rpcpb.Envelope{
 			RequestId: 42,
+			SessionId: route.id,
 			Payload: &rpcpb.Envelope_Response{Response: &rpcpb.RpcResponse{
 				Result: &rpcpb.RpcResponse_Ping{Ping: &rpcpb.PingResponse{
 					TargetReceiveUnixMillis:      clientSentAt.Add(10 * time.Millisecond).UnixMilli(),
@@ -74,7 +79,7 @@ func TestDoPingReportsRoundTrip(t *testing.T) {
 	}()
 
 	var stdout, stderr bytes.Buffer
-	if !doPing("beam", 7, 99, time.Second, &nextID, &pendingID, responses, &stdout, &stderr, send) {
+	if !doPing("beam", 7, 99, route, time.Second, &nextID, &pendingID, responses, &stdout, &stderr, send) {
 		t.Fatalf("doPing failed: %s", stderr.String())
 	}
 	if got := stdout.String(); !strings.Contains(got, "client → target  wall 10ms · computed 14ms") ||

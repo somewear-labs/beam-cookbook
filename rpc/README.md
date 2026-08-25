@@ -14,6 +14,7 @@ Every IPv4Datagram payload is a proto-serialized `Envelope`:
 message Envelope {
   string namespace  = 1;  // must equal "swl.rpc.v1" — rejects non-RPC datagrams
   uint32 request_id = 2;  // correlates async responses to their originating request
+  uint64 session_id = 6;  // binds established shell traffic to its channel policy
   oneof payload {
     RpcRequest  request  = 3;
     RpcResponse response = 4;
@@ -25,7 +26,7 @@ See [`proto/rpc.proto`](./proto/rpc.proto) for the full schema.
 
 ## Network setup
 
-Both machines must be signed in to Beam and joined to the same Somewear workspace. The workspace ID is embedded in every IPv4Datagram — packets sent from one workspace are only delivered to nodes in the same workspace.
+Both machines must be signed in to Beam and joined to the same Somewear workspace. The active workspace ID is embedded in every IPv4Datagram — packets sent from one workspace are only delivered to nodes in the same workspace.
 
 ### 1. Find and activate the workspace on each machine
 
@@ -39,7 +40,9 @@ beam workspace activate --name "My Workspace"
 beam workspace activate --id 39054
 ```
 
-Note the workspace ID — you'll pass it to `rpc` via `--workspace`.
+Grid Remote Shell reads the active workspace from each local Beam instance. To
+change networks, activate the workspace in Beam; Grid Remote Shell does not
+provide a separate workspace override.
 
 ### 2. Configure Beam webhook on the remote machine
 
@@ -62,15 +65,15 @@ beam config set webhook-address http://localhost:8080
 ### 4. Start `rpc server` on the remote machine
 
 ```bash
-./rpc server --port 8081 --workspace 39054
+./rpc server --port 8081
 ```
 
-`--port` must match the webhook address you set in step 2. `--workspace` must match the activated workspace ID.
+`--port` must match the webhook address you set in step 2.
 
 ### 5. Start `rpc shell` on the local machine
 
 ```bash
-./rpc shell --webhook-port 8080 --workspace 39054
+./rpc shell --webhook-port 8080 --target-user 384899
 ```
 
 `--webhook-port` must match the webhook address you set in step 3.
@@ -81,20 +84,26 @@ beam config set webhook-address http://localhost:8080
 
 ### Remote machine
 ```bash
-./rpc server --port 8081 --workspace 39054
-./rpc server --port 8081 --workspace 39054 --max-response 500
+./rpc server --port 8081
+./rpc server --port 8081 --max-response 500
 ```
 
 ### Local machine — interactive shell
 ```bash
-./rpc shell --webhook-port 8080 --workspace 39054
-./rpc shell --webhook-port 8080 --workspace 39054 --timeout 30s
+./rpc shell --webhook-port 8080 --target-user 384899
+./rpc shell --webhook-port 8080 --target-user 384899 --timeout 30s
+./rpc shell --webhook-port 8080 --target-user 384899 --channels radio
 ```
+
+`--channels` constrains established request/response traffic in both directions.
+Discovery and Connect remain unconstrained so the peers can align before using
+the requested channels. Valid values are `radio`, `satellite`,
+`cellular`, and `mesh`; combine them with commas.
 
 ### Local machine — one-shot send
 ```bash
-./rpc send --workspace 39054 "uptime"
-./rpc send --workspace 39054 "df -h"
+./rpc send --target-user 384899 "uptime"
+./rpc send --target-user 384899 "df -h"
 ```
 
 ## Supported platforms
@@ -135,12 +144,12 @@ Requires Go 1.22+ and (for `make proto`) `protoc` with `protoc-gen-go`.
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--workspace` | `39054` | Somewear workspace ID |
 | `--beam-url` | `http://localhost:9091` | Beam REST API |
 | `--port` *(server)* | `9091` | Beam webhook port on remote |
 | `--webhook-port` *(shell)* | `8080` | Local port for receiving responses |
 | `--max-response` *(server)* | `200` | Stdout truncation limit in bytes |
 | `--timeout` *(shell)* | `30s` | Response wait timeout |
+| `--channels` *(shell)* | unrestricted | Allowed channels for established session traffic |
 
 ## Adding a new RPC method
 
