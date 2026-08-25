@@ -93,6 +93,7 @@ message RpcRequest {
     ConnectRequest   connect   = 2;
     DiscoverRequest  discover  = 3;
     PingRequest      ping      = 4;
+    PutRequest       put       = 5;
     DisconnectRequest disconnect = 6;
   }
 }
@@ -105,6 +106,7 @@ message RpcResponse {
     ConnectResponse   connect   = 3;
     DiscoverResponse  discover  = 4;
     PingResponse      ping      = 5;
+    PutResponse       put       = 6;
   }
 }
 
@@ -155,6 +157,27 @@ message PingResponse {
   // account and package type, this reconstructs the request datagram ID.
   int64 client_package_send_unix_seconds = 3;
   int64 client_account_id = 4;
+}
+
+// --- File upload ---
+
+// PutRequest transfers one acknowledged chunk. Repeating a chunk at an
+// already-acknowledged offset is safe, which makes Beam webhook retries
+// idempotent.
+message PutRequest {
+  string transfer_id = 1;
+  string name = 2;
+  uint32 mode = 3;
+  uint64 offset = 4;
+  uint64 total_size = 5;
+  bytes data = 6;
+  bool complete = 7;
+}
+
+message PutResponse {
+  uint64 next_offset = 1;
+  string path = 2;
+  bool complete = 3;
 }
 
 // --- Discovery ---

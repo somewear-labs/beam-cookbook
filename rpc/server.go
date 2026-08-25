@@ -67,6 +67,9 @@ type rpcServer struct {
 	cwdMu       sync.Mutex
 	discoveryMu sync.Mutex
 	discoveries map[discoveryKey]time.Time
+	uploadMu    sync.Mutex
+	uploads     map[uploadKey]*uploadState
+	uploadRoot  string
 	sessions    *sessionRegistry
 	streams     *stream.Endpoint
 	idempotency idempotencyGuard
@@ -139,6 +142,13 @@ func (s *rpcServer) handleRequest(env *rpcpb.Envelope, sourceUserID int64, packa
 			return
 		}
 		s.handlePing(env.RequestId, sourceUserID, route, packageSentAt, receivedAt)
+	case *rpcpb.RpcRequest_Put:
+		route, ok := s.routeForSession(sourceUserID, env.GetSessionId())
+		if !ok {
+			s.sendError(env.RequestId, sourceUserID, sessionRoute{id: env.GetSessionId()}, "unknown or expired shell session")
+			return
+		}
+		s.handlePut(env.RequestId, sourceUserID, route, req.GetPut())
 	case *rpcpb.RpcRequest_Disconnect:
 		if env.GetSessionId() != 0 {
 			s.sessions.remove(sourceUserID, env.GetSessionId())
@@ -191,6 +201,9 @@ func (s *rpcServer) acceptDiscovery(sourceUserID int64, requestID uint32) bool {
 	s.discoveryMu.Lock()
 	defer s.discoveryMu.Unlock()
 
+	if s.discoveries == nil {
+		s.discoveries = make(map[discoveryKey]time.Time)
+	}
 	now := time.Now()
 	for key, seenAt := range s.discoveries {
 		if now.Sub(seenAt) > time.Minute {
