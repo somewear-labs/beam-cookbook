@@ -1,0 +1,69 @@
+name: grid-remote-shell
+
+x-grid-node: &grid-node
+  image: grid-remote-shell-harness:local
+  build:
+    context: ..
+    dockerfile: docker-harness/Dockerfile
+  init: true
+  restart: unless-stopped
+  environment:
+    WORKSPACE_ID: ${WORKSPACE_ID:?Set WORKSPACE_ID in .env}
+    LOG_LEVEL: ${LOG_LEVEL:-info}
+    JAVA_OPTS: ${JAVA_OPTS:--Xmx512m}
+    BEAM_API_KEY_FILE: /run/secrets/beam_api_key
+  volumes:
+    - ${BEAM_JAR:?Set BEAM_JAR in .env}:/opt/beam/beam.jar:ro
+  healthcheck:
+    test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9091/api/health"]
+    interval: 10s
+    timeout: 5s
+    retries: 12
+    start_period: 20s
+  security_opt:
+    - no-new-privileges:true
+
+services:
+  grid-client:
+    <<: *grid-node
+    hostname: grid-client
+    environment:
+      WORKSPACE_ID: ${WORKSPACE_ID:?Set WORKSPACE_ID in .env}
+      TARGET_ACCOUNT_ID: ${TARGET_ACCOUNT_ID:-}
+      GRID_ROLE: client
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      JAVA_OPTS: ${JAVA_OPTS:--Xmx512m}
+      BEAM_API_KEY_FILE: /run/secrets/beam_api_key
+    secrets:
+      - source: client_api_key
+        target: beam_api_key
+    volumes:
+      - ${BEAM_JAR:?Set BEAM_JAR in .env}:/opt/beam/beam.jar:ro
+      - grid-client-state:/var/lib/somewear/beam
+
+  grid-target:
+    <<: *grid-node
+    hostname: grid-target
+    environment:
+      WORKSPACE_ID: ${WORKSPACE_ID:?Set WORKSPACE_ID in .env}
+      GRID_ROLE: target
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      JAVA_OPTS: ${JAVA_OPTS:--Xmx512m}
+      BEAM_API_KEY_FILE: /run/secrets/beam_api_key
+      MAX_RESPONSE_BYTES: ${MAX_RESPONSE_BYTES:-128}
+    secrets:
+      - source: target_api_key
+        target: beam_api_key
+    volumes:
+      - ${BEAM_JAR:?Set BEAM_JAR in .env}:/opt/beam/beam.jar:ro
+      - grid-target-state:/var/lib/somewear/beam
+
+secrets:
+  client_api_key:
+    file: ${CLIENT_API_KEY_FILE:?Set CLIENT_API_KEY_FILE in .env}
+  target_api_key:
+    file: ${TARGET_API_KEY_FILE:?Set TARGET_API_KEY_FILE in .env}
+
+volumes:
+  grid-client-state:
+  grid-target-state:

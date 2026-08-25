@@ -1,0 +1,5 @@
+bin/
+rpc
+rpc_linux
+docker-harness/.env
+docker-harness/secrets/
