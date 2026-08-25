@@ -81,6 +81,10 @@ func sendIPv4(beamURL string, workspaceID int, b64payload string) error {
 }
 
 func sendIPv4To(beamURL string, workspaceID int, targetUserID int64, b64payload string) error {
+	return sendIPv4WithChannels(beamURL, workspaceID, targetUserID, b64payload, nil)
+}
+
+func sendIPv4WithChannels(beamURL string, workspaceID int, targetUserID int64, b64payload string, channels []rpcpb.SessionChannel) error {
 	request := map[string]any{
 		"workspaceId": workspaceID,
 		"ipv4":        map[string]any{"payload": b64payload},
@@ -88,8 +92,13 @@ func sendIPv4To(beamURL string, workspaceID int, targetUserID int64, b64payload 
 	if targetUserID != 0 {
 		request["targetUserId"] = targetUserID
 	}
+	path := "/api/package/ipv4/async"
+	if len(channels) > 0 {
+		request["channels"] = beamChannelNames(channels)
+		path = "/api/package/async"
+	}
 	body, _ := json.Marshal(request)
-	resp, err := http.Post(strings.TrimRight(beamURL, "/")+"/api/package/ipv4/async", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(strings.TrimRight(beamURL, "/")+path, "application/json", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}

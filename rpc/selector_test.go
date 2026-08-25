@@ -44,8 +44,19 @@ func TestSelectableShellTargetsFiltersAndSorts(t *testing.T) {
 		0:  discoveryTarget(0, "no-account", discoveryProtocolVersion, capabilityShell),
 	}
 
-	got := selectableShellTargets(targets)
+	got := selectableShellTargets(targets, false)
 	if len(got) != 2 || got[0].accountID != 10 || got[1].accountID != 20 {
+		t.Fatalf("selectableShellTargets() = %+v", got)
+	}
+}
+
+func TestSelectableShellTargetsRequiresSessionChannelCapability(t *testing.T) {
+	targets := map[int64]discoveredTarget{
+		1: discoveryTarget(1, "legacy", discoveryProtocolVersion, capabilityShell),
+		2: discoveryTarget(2, "current", discoveryProtocolVersion, capabilityShell|capabilitySessionChannels),
+	}
+	got := selectableShellTargets(targets, true)
+	if len(got) != 1 || got[0].accountID != 2 {
 		t.Fatalf("selectableShellTargets() = %+v", got)
 	}
 }
