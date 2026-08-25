@@ -82,7 +82,7 @@ func (s *rpcServer) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		env := inbound.envelope
 		switch env.Payload.(type) {
 		case *rpcpb.Envelope_Request:
-			s.handleRequest(env, inbound.sourceUserID)
+			s.handleRequest(env, inbound.sourceUserID, inbound.packageSentAt, inbound.receivedAt)
 		case *rpcpb.Envelope_Response:
 			fmt.Printf("[req %d] Received response (ignoring)\n", env.RequestId)
 		default:
@@ -91,7 +91,7 @@ func (s *rpcServer) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *rpcServer) handleRequest(env *rpcpb.Envelope, sourceUserID int64) {
+func (s *rpcServer) handleRequest(env *rpcpb.Envelope, sourceUserID int64, packageSentAt, receivedAt time.Time) {
 	req := env.GetRequest()
 	switch req.Method.(type) {
 	case *rpcpb.RpcRequest_Exec:
@@ -102,8 +102,39 @@ func (s *rpcServer) handleRequest(env *rpcpb.Envelope, sourceUserID int64) {
 		if s.acceptDiscovery(sourceUserID, env.RequestId) {
 			go s.handleDiscover(env.RequestId, sourceUserID, req.GetDiscover())
 		}
+	case *rpcpb.RpcRequest_Ping:
+		s.handlePing(env.RequestId, sourceUserID, packageSentAt, receivedAt)
 	default:
 		s.sendError(env.RequestId, sourceUserID, fmt.Sprintf("unknown method: %T", req.Method))
+	}
+}
+
+func (s *rpcServer) handlePing(reqID uint32, targetUserID int64, packageSentAt, receivedAt time.Time) {
+	if receivedAt.IsZero() {
+		receivedAt = time.Now()
+	}
+	var packageSendUnixSeconds int64
+	if !packageSentAt.IsZero() {
+		packageSendUnixSeconds = packageSentAt.Unix()
+	}
+	resp := &rpcpb.Envelope{
+		RequestId: reqID,
+		Payload: &rpcpb.Envelope_Response{Response: &rpcpb.RpcResponse{
+			Result: &rpcpb.RpcResponse_Ping{Ping: &rpcpb.PingResponse{
+				TargetReceiveUnixMillis:      receivedAt.UnixMilli(),
+				TargetSendUnixMillis:         time.Now().UnixMilli(),
+				ClientPackageSendUnixSeconds: packageSendUnixSeconds,
+				ClientAccountId:              targetUserID,
+			}},
+		}},
+	}
+	b64, err := marshalEnvelope(resp)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "  Failed to marshal ping response:", err)
+		return
+	}
+	if err := sendIPv4To(s.beamURL, s.workspaceID, targetUserID, b64); err != nil {
+		fmt.Fprintln(os.Stderr, "  Failed to send ping response:", err)
 	}
 }
 

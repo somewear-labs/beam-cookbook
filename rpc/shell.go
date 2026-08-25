@@ -104,6 +104,13 @@ func runShell(args []string) {
 	fmt.Println()
 
 	doConnect(*beamURL, workspaceID, selectedUser, *timeout, &nextID, &pendingID, responses)
+	slashCommands := shellSlashCommands{
+		stdout: os.Stdout,
+		stderr: os.Stderr,
+		ping: func() {
+			doPing(*beamURL, workspaceID, selectedUser, *timeout, &nextID, &pendingID, responses, os.Stdout, os.Stderr, sendIPv4To)
+		},
+	}
 
 	scanner := bufio.NewScanner(os.Stdin)
 	for {
@@ -118,6 +125,9 @@ func runShell(args []string) {
 		}
 		if strings.EqualFold(command, "exit") || strings.EqualFold(command, "quit") {
 			break
+		}
+		if slashCommands.handle(command) {
+			continue
 		}
 
 		id := nextID.Add(1)
