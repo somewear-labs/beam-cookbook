@@ -109,6 +109,25 @@ func sendIPv4WithChannels(beamURL string, workspaceID int, targetUserID int64, b
 	return nil
 }
 
+func sendGridStreamFrame(beamURL string, workspaceID int, targetUserID int64, route sessionRoute, constrained bool, frame *rpcpb.GridStreamFrame) error {
+	envelope := &rpcpb.Envelope{
+		SessionId: route.id,
+		Payload:   &rpcpb.Envelope_GridStream{GridStream: frame},
+	}
+	payload, err := marshalEnvelope(envelope)
+	if err != nil {
+		return fmt.Errorf("encode GridStream frame: %w", err)
+	}
+	var channels []rpcpb.SessionChannel
+	if constrained {
+		channels = route.channels
+	}
+	if err := sendIPv4WithChannels(beamURL, workspaceID, targetUserID, payload, channels); err != nil {
+		return fmt.Errorf("send GridStream frame: %w", err)
+	}
+	return nil
+}
+
 type inboundEnvelope struct {
 	envelope      *rpcpb.Envelope
 	sourceUserID  int64

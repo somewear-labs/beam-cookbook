@@ -11,8 +11,9 @@ message Envelope {
   uint32 request_id  = 2;
   uint64 session_id  = 6;
   oneof payload {
-    RpcRequest  request  = 3;
-    RpcResponse response = 4;
+    RpcRequest      request     = 3;
+    RpcResponse     response    = 4;
+    GridStreamFrame grid_stream = 5;
   }
 }
 
@@ -22,6 +23,67 @@ enum SessionChannel {
   SATELLITE = 2;
   CELLULAR = 3;
   MESH = 4;
+}
+
+// GridStreamFrame multiplexes ordered byte streams over IPv4Datagram delivery.
+// stream_id is scoped to the authenticated source account. The webhook account
+// metadata supplies peer identity and is never accepted from this payload.
+message GridStreamFrame {
+  uint32 stream_id = 1;
+  oneof payload {
+    GridStreamOpen       open        = 2;
+    GridStreamAccept     accept      = 3;
+    GridStreamData       data        = 4;
+    GridStreamAck        ack         = 5;
+    GridStreamHalfClose  half_close  = 6;
+    GridStreamClose      close       = 7;
+    GridStreamReset      reset       = 8;
+  }
+}
+
+message GridStreamOpen {
+  uint32 protocol_version = 1;
+  string service = 2;
+  uint32 receive_window_bytes = 3;
+}
+
+message GridStreamAccept {
+  uint32 receive_window_bytes = 1;
+}
+
+message GridStreamData {
+  uint64 offset = 1;
+  bytes payload = 2;
+}
+
+// received_offset cumulatively acknowledges all bytes below the offset.
+// receive_window_bytes is the additional capacity available from that offset.
+message GridStreamAck {
+  uint64 received_offset = 1;
+  uint32 receive_window_bytes = 2;
+}
+
+message GridStreamHalfClose {
+  uint64 final_offset = 1;
+}
+
+message GridStreamClose {
+  uint64 final_offset = 1;
+  int32 exit_code = 2;
+  string message = 3;
+}
+
+message GridStreamReset {
+  Reason reason = 1;
+  string message = 2;
+
+  enum Reason {
+    REASON_UNSPECIFIED = 0;
+    PEER_UNAVAILABLE = 1;
+    PROTOCOL_ERROR = 2;
+    CANCELLED = 3;
+    INTERNAL_ERROR = 4;
+  }
 }
 
 // RpcRequest carries a single method call. Add new methods here as a new oneof field.
