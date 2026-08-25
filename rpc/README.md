@@ -1,6 +1,9 @@
 # rpc — Remote Shell over Somewear IPv4Datagram
 
-Execute shell commands on a remote machine over any Somewear link (satellite, WiFi). Commands and responses travel as protobuf `Envelope` messages inside Beam's IPv4Datagram packet type.
+Execute shell commands on a remote machine over any Somewear link (satellite,
+radio, or broadband). Commands and responses travel as protobuf
+`Envelope` messages inside Beam's existing IPv4Datagram packet type. No Souvla
+changes are required.
 
 ## Architecture
 
@@ -16,13 +19,31 @@ message Envelope {
   uint32 request_id = 2;  // correlates async responses to their originating request
   uint64 session_id = 6;  // binds established shell traffic to its channel policy
   oneof payload {
-    RpcRequest  request  = 3;
-    RpcResponse response = 4;
+    RpcRequest      request     = 3;
+    RpcResponse     response    = 4;
+    GridStreamFrame grid_stream = 5;
   }
 }
 ```
 
 See [`proto/rpc.proto`](./proto/rpc.proto) for the full schema.
+
+## GridStreams
+
+`GridStreamFrame` provides a generic named byte-stream transport over the
+existing Grid message path. It handles chunking, ordering, duplicate
+suppression, flow control, close status, and reset while retaining the
+authenticated peer identity supplied by Beam webhook metadata.
+
+The remote shell keeps its features on the standard request/response RPC:
+discovery, connect, ping, file-upload chunks, and each command are regular RPC
+messages. A command request may ask the target to open the
+`grid-command-output.v1` stream back to the client. Only command output flows
+on that application stream; command input remains in the initiating request.
+
+Grid/Souvla remains the trust server. GridStream adds no end-to-end encryption;
+each frame inherits the encryption and delivery properties of its selected
+Grid link.
 
 ## Network setup
 
@@ -49,7 +70,7 @@ provide a separate workspace override.
 Beam must forward inbound IPv4Datagrams to `rpc server` via webhook. Choose any free port (e.g. 8081):
 
 ```bash
-beam config set webhook-address http://localhost:8081
+beam config set webhook-address=http://localhost:8081
 ```
 
 Then restart the Beam daemon if it is already running.
@@ -59,7 +80,7 @@ Then restart the Beam daemon if it is already running.
 The local Beam daemon must forward response packets to `rpc shell`. Use the same port you'll pass to `--webhook-port` (default 8080):
 
 ```bash
-beam config set webhook-address http://localhost:8080
+beam config set webhook-address=http://localhost:8080
 ```
 
 ### 4. Start `rpc server` on the remote machine
@@ -73,10 +94,33 @@ beam config set webhook-address http://localhost:8080
 ### 5. Start `rpc shell` on the local machine
 
 ```bash
-./rpc shell --webhook-port 8080 --target-user 384899
+./rpc shell --webhook-port 8080
 ```
 
-`--webhook-port` must match the webhook address you set in step 3.
+`--webhook-port` must match the webhook address you set in step 3. The shell
+discovers compatible targets and always shows an interactive selector, even
+when only one machine responds. Use arrow keys or `j`/`k` to move, Enter to
+connect, and `q` to cancel.
+
+The client sends each command as a standard `ExecRequest`. The target then
+opens a command-output stream back to the client, so output is printed as it
+arrives without turning the shell protocol into a full-duplex stream. Press
+Ctrl-C during a command to reset its output stream and interrupt the remote
+process group. At the shell prompt, Ctrl-C asks for confirmation before closing
+the session; `exit` and `quit` close immediately.
+
+Commands beginning with `/` are handled locally and are never passed to the
+remote system shell. `/help` lists the available commands and `/ping` measures
+a compact Grid request/response, showing client-to-target, target-to-client,
+and round-trip time. Directional values use peer wall clocks and therefore
+require synchronized clocks. The output also applies an NTP-style clock-offset
+estimate to show computed directional values; computed RTT removes target
+processing time, and computed one-way legs assume symmetric path delay. A
+single exchange estimates clock offset, not clock-rate drift over time.
+`/put PATH` sends a regular file as acknowledged request/response chunks and
+prints the resulting target path. The target stores uploads in a private
+temporary directory scoped to the authenticated sender account, preserves
+permission bits, and limits this POC path to 8 MiB per file.
 
 ---
 
@@ -90,6 +134,13 @@ beam config set webhook-address http://localhost:8080
 
 ### Local machine — interactive shell
 ```bash
+# Discover target account IDs first
+./rpc nmap --webhook-port 8080
+
+# Discover, select, and connect
+./rpc shell --webhook-port 8080
+
+# Skip discovery when the account ID is already known
 ./rpc shell --webhook-port 8080 --target-user 384899
 ./rpc shell --webhook-port 8080 --target-user 384899 --timeout 30s
 ./rpc shell --webhook-port 8080 --target-user 384899 --channels radio
@@ -99,6 +150,11 @@ beam config set webhook-address http://localhost:8080
 Discovery and Connect remain unconstrained so the peers can align before using
 the requested channels. Valid values are `radio`, `satellite`,
 `cellular`, and `mesh`; combine them with commas.
+
+`nmap` sends one workspace broadcast and gathers compact, unicast responses.
+The account IDs in its output come from Beam webhook metadata rather than the
+RPC payload. Targets randomize their response time within the requested jitter
+window and suppress duplicate responses when Beam retries a webhook.
 
 ### Local machine — one-shot send
 ```bash
@@ -147,8 +203,13 @@ Requires Go 1.22+ and (for `make proto`) `protoc` with `protoc-gen-go`.
 | `--beam-url` | `http://localhost:9091` | Beam REST API |
 | `--port` *(server)* | `9091` | Beam webhook port on remote |
 | `--webhook-port` *(shell)* | `8080` | Local port for receiving responses |
-| `--max-response` *(server)* | `200` | Stdout truncation limit in bytes |
-| `--timeout` *(shell)* | `30s` | Response wait timeout |
+| `--target-user` *(shell)* | `0` | Target account ID; zero discovers and selects a target |
+| `--target-user` *(send)* | — | Required target account ID; commands cannot be broadcast |
+| `--max-response` *(server)* | `200` | One-shot `send` response limit; streamed shell output is not truncated |
+| `--timeout` *(shell)* | `30s` | Connect and command-output stream-open timeout |
+| `--discovery-timeout` *(shell)* | `5s` | Target discovery collection window |
+| `--timeout` *(nmap)* | `5s` | Discovery response collection window |
+| `--response-jitter` *(shell/nmap)* | `750ms` | Maximum target response delay (capped at 2s) |
 | `--channels` *(shell)* | unrestricted | Allowed channels for established session traffic |
 
 ## Adding a new RPC method

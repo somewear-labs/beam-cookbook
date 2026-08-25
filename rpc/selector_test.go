@@ -37,11 +37,12 @@ func TestApplySelectorKey(t *testing.T) {
 
 func TestSelectableShellTargetsFiltersAndSorts(t *testing.T) {
 	targets := map[int64]discoveredTarget{
-		20: discoveryTarget(20, "zulu", discoveryProtocolVersion, capabilityShell),
-		10: discoveryTarget(10, "Alpha", discoveryProtocolVersion, capabilityShell),
-		30: discoveryTarget(30, "future", discoveryProtocolVersion+1, capabilityShell),
+		20: discoveryTarget(20, "zulu", discoveryProtocolVersion, capabilityShell|capabilityStreamOutput),
+		10: discoveryTarget(10, "Alpha", discoveryProtocolVersion, capabilityShell|capabilityStreamOutput),
+		30: discoveryTarget(30, "future", discoveryProtocolVersion+1, capabilityShell|capabilityStreamOutput),
 		40: discoveryTarget(40, "no-shell", discoveryProtocolVersion, 0),
-		0:  discoveryTarget(0, "no-account", discoveryProtocolVersion, capabilityShell),
+		50: discoveryTarget(50, "no-stream", discoveryProtocolVersion, capabilityShell),
+		0:  discoveryTarget(0, "no-account", discoveryProtocolVersion, capabilityShell|capabilityStreamOutput),
 	}
 
 	got := selectableShellTargets(targets, nil)
@@ -52,8 +53,8 @@ func TestSelectableShellTargetsFiltersAndSorts(t *testing.T) {
 
 func TestSelectableShellTargetsRequiresSessionChannelCapability(t *testing.T) {
 	targets := map[int64]discoveredTarget{
-		1: discoveryTarget(1, "legacy", discoveryProtocolVersion, capabilityShell),
-		2: discoveryTarget(2, "current", discoveryProtocolVersion, capabilityShell|capabilitySessionChannels, rpcpb.SessionChannel_RADIO),
+		1: discoveryTarget(1, "legacy", discoveryProtocolVersion, capabilityShell|capabilityStreamOutput),
+		2: discoveryTarget(2, "current", discoveryProtocolVersion, capabilityShell|capabilityStreamOutput|capabilitySessionChannels, rpcpb.SessionChannel_RADIO),
 		3: discoveryTarget(3, "wrong-channel", discoveryProtocolVersion, capabilityShell|capabilitySessionChannels, rpcpb.SessionChannel_CELLULAR),
 	}
 	got := selectableShellTargets(targets, []rpcpb.SessionChannel{rpcpb.SessionChannel_RADIO})
@@ -70,7 +71,7 @@ func TestSingleTargetStillRequiresInteractiveSelection(t *testing.T) {
 	defer readEnd.Close()
 	defer writeEnd.Close()
 
-	target := discoveryTarget(10, "orin", discoveryProtocolVersion, capabilityShell)
+	target := discoveryTarget(10, "orin", discoveryProtocolVersion, capabilityShell|capabilityStreamOutput)
 	_, selected, err := selectTarget([]discoveredTarget{target}, readEnd, io.Discard)
 	if err == nil || selected {
 		t.Fatalf("selectTarget(single non-TTY) = selected %v, err %v; want interactive-selection error", selected, err)

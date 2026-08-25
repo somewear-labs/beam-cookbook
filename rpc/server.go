@@ -16,6 +16,7 @@ import (
 	"time"
 
 	rpcpb "somewear/rpc/proto"
+	"somewear/rpc/stream"
 )
 
 const defaultMaxResponse = 200
@@ -41,6 +42,9 @@ func runServer(args []string) {
 		discoveries: make(map[discoveryKey]time.Time),
 		sessions:    newSessionRegistry(),
 	}
+	s.streams = stream.NewEndpoint(func(peerAccountID int64, route stream.Route, constrained bool, frame *rpcpb.GridStreamFrame) error {
+		return sendGridStreamFrame(s.beamURL, s.workspaceID, peerAccountID, sessionRoute{id: route.SessionID, channels: route.Channels}, constrained, frame)
+	})
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleWebhook)
@@ -64,6 +68,7 @@ type rpcServer struct {
 	discoveryMu sync.Mutex
 	discoveries map[discoveryKey]time.Time
 	sessions    *sessionRegistry
+	streams     *stream.Endpoint
 	idempotency idempotencyGuard
 }
 
@@ -83,6 +88,14 @@ func (s *rpcServer) handleWebhook(w http.ResponseWriter, r *http.Request) {
 
 	for _, inbound := range parseWebhookEnvelopes(body) {
 		env := inbound.envelope
+		if frame := env.GetGridStream(); frame != nil {
+			route, ok := s.routeForSession(inbound.sourceUserID, env.GetSessionId())
+			if !ok {
+				continue
+			}
+			s.streams.Handle(inbound.sourceUserID, stream.Route{SessionID: route.id, Channels: route.channels}, frame)
+			continue
+		}
 		switch env.Payload.(type) {
 		case *rpcpb.Envelope_Request:
 			if !s.idempotency.acceptRequest(inbound.sourceUserID, env) {
@@ -106,6 +119,10 @@ func (s *rpcServer) handleRequest(env *rpcpb.Envelope, sourceUserID int64, packa
 		route, ok := s.routeForSession(sourceUserID, env.GetSessionId())
 		if !ok {
 			s.sendError(env.RequestId, sourceUserID, sessionRoute{id: env.GetSessionId()}, "unknown or expired shell session")
+			return
+		}
+		if req.GetExec().GetStreamOutput() {
+			go s.handleStreamExec(env.RequestId, sourceUserID, route, req.GetExec())
 			return
 		}
 		s.handleExec(env.RequestId, sourceUserID, route, req.GetExec())
@@ -216,7 +233,7 @@ func (s *rpcServer) handleDiscover(reqID uint32, targetUserID int64, req *rpcpb.
 				ProtocolVersion: discoveryProtocolVersion,
 				Hostname:        truncateRunes(hostname, maxDiscoveryHostnameRunes),
 				Arch:            truncateRunes(arch, maxDiscoveryArchRunes),
-				Capabilities:    capabilityShell | capabilitySessionChannels,
+				Capabilities:    capabilityShell | capabilitySessionChannels | capabilityStreamOutput,
 				Channels:        channels,
 			}},
 		}},
