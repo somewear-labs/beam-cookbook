@@ -18,8 +18,9 @@ message Envelope {
 // RpcRequest carries a single method call. Add new methods here as a new oneof field.
 message RpcRequest {
   oneof method {
-    ExecRequest    exec    = 1;
-    ConnectRequest connect = 2;
+    ExecRequest     exec     = 1;
+    ConnectRequest  connect  = 2;
+    DiscoverRequest discover = 3;
   }
 }
 
@@ -28,7 +29,8 @@ message RpcResponse {
   oneof result {
     ExecResponse     exec    = 1;
     RpcError         error   = 2;
-    ConnectResponse  connect = 3;
+    ConnectResponse  connect  = 3;
+    DiscoverResponse discover = 4;
   }
 }
 
@@ -54,6 +56,23 @@ message ConnectResponse {
   string arch = 3;
   string cpu_model = 4;
   int32  cpu_count = 5;
+}
+
+// --- Discovery ---
+
+// DiscoverRequest is broadcast to a workspace. response_jitter_ms asks peers
+// to spread their replies over a bounded window instead of responding at once.
+message DiscoverRequest {
+  uint32 response_jitter_ms = 1;
+}
+
+// The sender's Beam account ID is deliberately omitted because Beam supplies
+// it in the webhook metadata. Keep this response small for satellite links.
+message DiscoverResponse {
+  uint32 protocol_version = 1;
+  string hostname = 2;
+  string arch = 3;
+  uint32 capabilities = 4;
 }
 
 // --- Error ---
