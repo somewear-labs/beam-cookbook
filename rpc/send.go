@@ -11,12 +11,21 @@ import (
 
 func runSend(args []string) {
 	fs := flag.NewFlagSet("send", flag.ExitOnError)
-	workspace := fs.Int("workspace", defaultWorkspaceID, "Somewear workspace ID")
+	targetUser := fs.Int64("target-user", 0, "Target Beam user account ID")
 	beamURL := fs.String("beam-url", defaultBeamURL, "Beam API URL")
 	fs.Parse(args)
 
 	if fs.NArg() == 0 {
-		fmt.Fprintln(os.Stderr, "usage: rpc send [--workspace N] <command>")
+		fmt.Fprintln(os.Stderr, "usage: rpc send --target-user ID <command>")
+		os.Exit(1)
+	}
+	if *targetUser <= 0 {
+		fmt.Fprintln(os.Stderr, "send: --target-user must be greater than zero; commands cannot be broadcast")
+		os.Exit(1)
+	}
+	workspaceID, err := activeWorkspaceID(*beamURL)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "send:", err)
 		os.Exit(1)
 	}
 
@@ -37,7 +46,7 @@ func runSend(args []string) {
 		fmt.Fprintln(os.Stderr, "encode error:", err)
 		os.Exit(1)
 	}
-	if err := sendIPv4(*beamURL, *workspace, b64); err != nil {
+	if err := sendIPv4To(*beamURL, workspaceID, *targetUser, b64); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
