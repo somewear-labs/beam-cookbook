@@ -18,6 +18,8 @@ type shellSlashCommands struct {
 	ping   func()
 }
 
+type packageSender func(string, int, int64, string, []rpcpb.SessionChannel) error
+
 func (c shellSlashCommands) handle(command string) bool {
 	if !strings.HasPrefix(command, "/") {
 		return false
@@ -53,11 +55,12 @@ func doPing(
 	beamURL string,
 	workspace int,
 	targetUserID int64,
+	route sessionRoute,
 	timeout time.Duration,
 	nextID, pendingID *atomic.Uint32,
 	responses <-chan inboundEnvelope,
 	stdout, stderr io.Writer,
-	send func(string, int, int64, string) error,
+	send packageSender,
 ) bool {
 	id := nextID.Add(1)
 	pendingID.Store(id)
@@ -66,6 +69,7 @@ func doPing(
 	startedAt := time.Now()
 	envelope := &rpcpb.Envelope{
 		RequestId: id,
+		SessionId: route.id,
 		Payload: &rpcpb.Envelope_Request{
 			Request: &rpcpb.RpcRequest{
 				Method: &rpcpb.RpcRequest_Ping{Ping: &rpcpb.PingRequest{
@@ -79,7 +83,7 @@ func doPing(
 		fmt.Fprintln(stderr, "[ping encode error]", err)
 		return false
 	}
-	if err := send(beamURL, workspace, targetUserID, payload); err != nil {
+	if err := send(beamURL, workspace, targetUserID, payload, route.channels); err != nil {
 		fmt.Fprintln(stderr, "[ping send error]", err)
 		return false
 	}
@@ -90,6 +94,9 @@ func doPing(
 		select {
 		case inbound := <-responses:
 			if inbound.envelope.GetRequestId() != id {
+				continue
+			}
+			if inbound.envelope.GetSessionId() != route.id {
 				continue
 			}
 			response := inbound.envelope.GetResponse()

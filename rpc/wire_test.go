@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -62,6 +63,41 @@ func TestSendIPv4ToAddsTargetOnlyForUnicast(t *testing.T) {
 	}
 	if got := int64(requests[1]["targetUserId"].(float64)); got != 384899 {
 		t.Fatalf("targetUserId = %d, want 384899", got)
+	}
+}
+
+func TestSendIPv4WithChannelsUsesGenericBeamEndpoint(t *testing.T) {
+	var path string
+	var request struct {
+		WorkspaceID  int      `json:"workspaceId"`
+		TargetUserID int64    `json:"targetUserId"`
+		Channels     []string `json:"channels"`
+		IPv4         struct {
+			Payload string `json:"payload"`
+		} `json:"ipv4"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	err := sendIPv4WithChannels(server.URL, 22902, 384899, "payload", []rpcpb.SessionChannel{
+		rpcpb.SessionChannel_RADIO,
+		rpcpb.SessionChannel_MESH,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != "/api/package/async" || request.WorkspaceID != 22902 || request.TargetUserID != 384899 || request.IPv4.Payload != "payload" {
+		t.Fatalf("request path=%q body=%+v", path, request)
+	}
+	wantChannels := []string{"Radio", "Mesh"}
+	if !reflect.DeepEqual(request.Channels, wantChannels) {
+		t.Fatalf("channels = %v, want %v", request.Channels, wantChannels)
 	}
 }
 
