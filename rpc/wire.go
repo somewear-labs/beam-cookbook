@@ -56,12 +56,16 @@ func activeWorkspaceID(beamURL string) (int, error) {
 }
 
 func marshalEnvelope(env *rpcpb.Envelope) (string, error) {
-	env.Namespace = EnvelopeNamespace
-	b, err := proto.Marshal(env)
+	b, err := marshalEnvelopeBytes(env)
 	if err != nil {
 		return "", err
 	}
 	return base64.StdEncoding.EncodeToString(b), nil
+}
+
+func marshalEnvelopeBytes(env *rpcpb.Envelope) ([]byte, error) {
+	env.Namespace = EnvelopeNamespace
+	return proto.Marshal(env)
 }
 
 func unmarshalEnvelope(b64 string) (*rpcpb.Envelope, error) {
@@ -105,6 +109,30 @@ func sendIPv4WithChannels(beamURL string, workspaceID int, targetUserID int64, b
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	return nil
+}
+
+func sendFileWithChannels(beamURL string, workspaceID int, targetUserID int64, path string, channels []rpcpb.SessionChannel) error {
+	request := map[string]any{
+		"path":        path,
+		"workspaceId": workspaceID,
+	}
+	if targetUserID != 0 {
+		request["targetUserId"] = targetUserID
+	}
+	if len(channels) > 0 {
+		request["channels"] = beamChannelNames(channels)
+	}
+	body, _ := json.Marshal(request)
+	resp, err := http.Post(strings.TrimRight(beamURL, "/")+"/api/package/file/async", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= http.StatusMultipleChoices {
+		responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(responseBody)))
 	}
 	return nil
 }

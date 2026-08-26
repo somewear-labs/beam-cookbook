@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -14,10 +13,9 @@ import (
 )
 
 const (
-	rpcUploadChunkSize = 32 * 1024
-	rpcUploadMaxSize   = 8 * 1024 * 1024
-	rpcUploadMaxName   = 255
-	rpcUploadTTL       = 10 * time.Minute
+	rpcUploadMaxSize = 8 * 1024 * 1024
+	rpcUploadMaxName = 255
+	rpcUploadTTL     = 10 * time.Minute
 )
 
 type uploadKey struct {
@@ -37,6 +35,8 @@ type uploadState struct {
 	updatedAt   time.Time
 }
 
+type fileSender func(string, int, int64, string, []rpcpb.SessionChannel) error
+
 func uploadFileRPC(
 	beamURL string,
 	workspace int,
@@ -46,15 +46,13 @@ func uploadFileRPC(
 	timeout time.Duration,
 	nextID, pendingID *atomic.Uint32,
 	responses <-chan inboundEnvelope,
-	send packageSender,
+	send fileSender,
 ) (string, error) {
-	file, err := os.Open(localPath)
+	contents, err := os.ReadFile(localPath)
 	if err != nil {
 		return "", err
 	}
-	defer file.Close()
-
-	info, err := file.Stat()
+	info, err := os.Stat(localPath)
 	if err != nil {
 		return "", err
 	}
@@ -69,44 +67,28 @@ func uploadFileRPC(
 		return "", errors.New("file name is invalid")
 	}
 
-	transferID := fmt.Sprintf("%x-%x", time.Now().UnixNano(), randomRequestID())
-	buffer := make([]byte, rpcUploadChunkSize)
-	var offset uint64
-	for {
-		n, readErr := io.ReadFull(file, buffer)
-		if readErr != nil && readErr != io.EOF && readErr != io.ErrUnexpectedEOF {
-			return "", readErr
-		}
-		complete := offset+uint64(n) == uint64(info.Size())
-		request := &rpcpb.PutRequest{
-			TransferId: transferID,
-			Name:       name,
-			Mode:       uint32(info.Mode().Perm()),
-			Offset:     offset,
-			TotalSize:  uint64(info.Size()),
-			Data:       append([]byte(nil), buffer[:n]...),
-			Complete:   complete,
-		}
-
-		response, err := sendPutChunk(beamURL, workspace, targetUserID, route, request, timeout, nextID, pendingID, responses, send)
-		if err != nil {
-			return "", err
-		}
-		expectedOffset := offset + uint64(n)
-		if response.GetNextOffset() != expectedOffset {
-			return "", fmt.Errorf("target acknowledged offset %d, want %d", response.GetNextOffset(), expectedOffset)
-		}
-		offset = response.GetNextOffset()
-		if complete {
-			if !response.GetComplete() || response.GetPath() == "" {
-				return "", errors.New("target did not complete the upload")
-			}
-			return response.GetPath(), nil
-		}
+	request := &rpcpb.PutRequest{
+		TransferId: fmt.Sprintf("%x-%x", time.Now().UnixNano(), randomRequestID()),
+		Name:       name,
+		Mode:       uint32(info.Mode().Perm()),
+		TotalSize:  uint64(info.Size()),
+		Data:       contents,
+		Complete:   true,
 	}
+	response, err := sendPutFile(beamURL, workspace, targetUserID, route, request, timeout, nextID, pendingID, responses, send)
+	if err != nil {
+		return "", err
+	}
+	if response.GetNextOffset() != uint64(info.Size()) {
+		return "", fmt.Errorf("target acknowledged offset %d, want %d", response.GetNextOffset(), info.Size())
+	}
+	if !response.GetComplete() || response.GetPath() == "" {
+		return "", errors.New("target did not complete the upload")
+	}
+	return response.GetPath(), nil
 }
 
-func sendPutChunk(
+func sendPutFile(
 	beamURL string,
 	workspace int,
 	targetUserID int64,
@@ -115,7 +97,7 @@ func sendPutChunk(
 	timeout time.Duration,
 	nextID, pendingID *atomic.Uint32,
 	responses <-chan inboundEnvelope,
-	send packageSender,
+	send fileSender,
 ) (*rpcpb.PutResponse, error) {
 	id := nextID.Add(1)
 	pendingID.Store(id)
@@ -128,12 +110,25 @@ func sendPutChunk(
 			Method: &rpcpb.RpcRequest_Put{Put: request},
 		}},
 	}
-	payload, err := marshalEnvelope(envelope)
+	payload, err := marshalEnvelopeBytes(envelope)
 	if err != nil {
-		return nil, fmt.Errorf("encode upload chunk: %w", err)
+		return nil, fmt.Errorf("encode upload: %w", err)
 	}
-	if err := send(beamURL, workspace, targetUserID, payload, route.channels); err != nil {
-		return nil, fmt.Errorf("send upload chunk: %w", err)
+	tempFile, err := os.CreateTemp("", "grid-put-*.rpc")
+	if err != nil {
+		return nil, fmt.Errorf("create upload envelope: %w", err)
+	}
+	tempPath := tempFile.Name()
+	defer os.Remove(tempPath)
+	if _, err := tempFile.Write(payload); err != nil {
+		tempFile.Close()
+		return nil, fmt.Errorf("write upload envelope: %w", err)
+	}
+	if err := tempFile.Close(); err != nil {
+		return nil, fmt.Errorf("close upload envelope: %w", err)
+	}
+	if err := send(beamURL, workspace, targetUserID, tempPath, route.channels); err != nil {
+		return nil, fmt.Errorf("send upload: %w", err)
 	}
 
 	timer := time.NewTimer(timeout)
@@ -155,7 +150,7 @@ func sendPutChunk(
 				return nil, errors.New(rpcError.GetMessage())
 			}
 		case <-timer.C:
-			return nil, fmt.Errorf("upload chunk timed out after %s", timeout)
+			return nil, fmt.Errorf("upload timed out after %s", timeout)
 		}
 	}
 }
@@ -193,8 +188,8 @@ func (s *rpcServer) applyPutChunk(sourceUserID int64, request *rpcpb.PutRequest)
 	if request.GetTotalSize() > rpcUploadMaxSize {
 		return nil, fmt.Errorf("file exceeds %d-byte upload limit", rpcUploadMaxSize)
 	}
-	if len(request.GetData()) > rpcUploadChunkSize {
-		return nil, fmt.Errorf("upload chunk exceeds %d bytes", rpcUploadChunkSize)
+	if len(request.GetData()) > rpcUploadMaxSize {
+		return nil, fmt.Errorf("upload data exceeds %d bytes", rpcUploadMaxSize)
 	}
 
 	s.uploadMu.Lock()

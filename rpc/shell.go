@@ -154,7 +154,7 @@ func runShell(args []string) {
 			doPing(*beamURL, workspaceID, selectedUser, route, *timeout, &nextID, &pendingID, responses, os.Stdout, os.Stderr, sendIPv4WithChannels)
 		},
 		put: func(path string) {
-			remotePath, err := uploadFileRPC(*beamURL, workspaceID, selectedUser, route, path, *timeout, &nextID, &pendingID, responses, sendIPv4WithChannels)
+			remotePath, err := uploadFileRPC(*beamURL, workspaceID, selectedUser, route, path, *timeout, &nextID, &pendingID, responses, sendFileWithChannels)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "[file upload error]", err)
 				return

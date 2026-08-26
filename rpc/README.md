@@ -146,6 +146,16 @@ permission bits, and limits this POC path to 8 MiB per file.
 ./rpc shell --webhook-port 8080 --target-user 384899 --channels radio
 ```
 
+Inside the shell, upload a file to the target with:
+
+```text
+/put ./payload.bin
+```
+
+The target installs the file under its per-sender upload directory and returns
+the resulting path. This path uses router composite transfer; it does not use
+the WAN `FileRepository` store/fetch route.
+
 `--channels` constrains established request/response traffic in both directions.
 Discovery and Connect remain unconstrained so the peers can align before using
 the requested channels. Valid values are `radio`, `satellite`,
