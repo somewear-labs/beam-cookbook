@@ -23,7 +23,8 @@ const (
 	// EnvelopeNamespace is stamped on every outbound Envelope and checked on every
 	// inbound one. Any IPv4Datagram that doesn't carry this exact value is discarded
 	// before dispatch, preventing accidental execution of non-RPC packets.
-	EnvelopeNamespace = "swl.rpc.v1"
+	EnvelopeNamespace      = "swl.rpc.v1"
+	repositoryEnvelopeMIME = "application/vnd.somewear.grid-rpc"
 )
 
 func activeWorkspaceID(beamURL string) (int, error) {
@@ -115,17 +116,14 @@ func sendIPv4WithChannels(beamURL string, workspaceID int, targetUserID int64, b
 
 func sendFileWithChannels(beamURL string, workspaceID int, targetUserID int64, path string, channels []rpcpb.SessionChannel) error {
 	request := map[string]any{
-		"path":        path,
-		"workspaceId": workspaceID,
+		"path":     path,
+		"mimeType": repositoryEnvelopeMIME,
 	}
 	if targetUserID != 0 {
 		request["targetUserId"] = targetUserID
 	}
-	if len(channels) > 0 {
-		request["channels"] = beamChannelNames(channels)
-	}
 	body, _ := json.Marshal(request)
-	resp, err := http.Post(strings.TrimRight(beamURL, "/")+"/api/package/file/async", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(strings.TrimRight(beamURL, "/")+"/api/file-repository/upload", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}

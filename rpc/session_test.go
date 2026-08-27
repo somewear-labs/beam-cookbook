@@ -1,12 +1,33 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"testing"
 	"time"
 
 	rpcpb "somewear/rpc/proto"
 )
+
+func TestHandleConnectTracksDefaultSessionPeer(t *testing.T) {
+	beam := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer beam.Close()
+
+	server := &rpcServer{
+		workspaceID: 7,
+		beamURL:     beam.URL,
+		sessions:    newSessionRegistry(),
+	}
+	server.handleConnect(1, 42, &rpcpb.ConnectRequest{})
+
+	peers := server.sessions.peers()
+	if len(peers) != 1 || peers[0] != 42 {
+		t.Fatalf("connected peers = %v, want [42]", peers)
+	}
+}
 
 func TestParseSessionChannelsCanonicalizesNames(t *testing.T) {
 	got, err := parseSessionChannels("MESH, radio,Cellular")
@@ -61,6 +82,11 @@ func TestSessionRegistrySeparatesPeersAndExpiresSessions(t *testing.T) {
 	mesh := sessionRoute{id: 7, channels: []rpcpb.SessionChannel{rpcpb.SessionChannel_MESH}}
 	registry.put(100, radio)
 	registry.put(200, mesh)
+	registry.put(100, sessionRoute{id: 8, channels: radio.channels})
+	peers := registry.peers()
+	if len(peers) != 2 || !((peers[0] == 100 && peers[1] == 200) || (peers[0] == 200 && peers[1] == 100)) {
+		t.Fatalf("registry peers = %v", peers)
+	}
 
 	got, ok := registry.get(100, 7)
 	if !ok || !sameSessionChannels(got.channels, radio.channels) {

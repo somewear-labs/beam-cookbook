@@ -169,6 +169,21 @@ func (r *sessionRegistry) remove(peerAccountID int64, sessionID uint64) {
 	r.mu.Unlock()
 }
 
+func (r *sessionRegistry) peers() []int64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.expireLocked()
+	seen := make(map[int64]bool)
+	peers := make([]int64, 0)
+	for key := range r.sessions {
+		if !seen[key.peerAccountID] {
+			seen[key.peerAccountID] = true
+			peers = append(peers, key.peerAccountID)
+		}
+	}
+	return peers
+}
+
 func (r *sessionRegistry) expireLocked() {
 	now := r.now()
 	for key, state := range r.sessions {

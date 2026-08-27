@@ -153,13 +153,17 @@ Inside the shell, upload a file to the target with:
 ```
 
 The target installs the file under its per-sender upload directory and returns
-the resulting path. This path uses router composite transfer; it does not use
-the WAN `FileRepository` store/fetch route.
+the resulting path. The upload envelope is stored in the WAN file repository;
+the shared SDK receives the routed file-metadata package and wakes the target
+immediately to download unseen RPC envelopes. A slow repository reconciliation
+recovers missed notifications. The same namespace and session checks apply as
+webhook traffic.
 
 `--channels` constrains established request/response traffic in both directions.
 Discovery and Connect remain unconstrained so the peers can align before using
 the requested channels. Valid values are `radio`, `satellite`,
-`cellular`, and `mesh`; combine them with commas.
+`cellular`, and `mesh`; combine them with commas. Repository-backed `/put`
+uploads require high-bandwidth WAN and do not use the session channel list.
 
 `nmap` sends one workspace broadcast and gathers compact, unicast responses.
 The account IDs in its output come from Beam webhook metadata rather than the
