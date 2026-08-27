@@ -150,6 +150,8 @@ Inside the shell, upload a file to the target with:
 
 ```text
 /put ./payload.bin
+/put-repo ./payload.bin
+/put-grid ./payload.bin
 ```
 
 The target installs the file under its per-sender upload directory and returns
@@ -162,8 +164,10 @@ webhook traffic.
 `--channels` constrains established request/response traffic in both directions.
 Discovery and Connect remain unconstrained so the peers can align before using
 the requested channels. Valid values are `radio`, `satellite`,
-`cellular`, and `mesh`; combine them with commas. Repository-backed `/put`
-uploads require high-bandwidth WAN and do not use the session channel list.
+`cellular`, and `mesh`; combine them with commas. `/put` and `/put-repo` use
+the high-bandwidth WAN repository and do not use the session channel list.
+`/put-grid` sends 32 KiB chunks as IPv4Datagrams and follows the session's
+channel constraints.
 
 `nmap` sends one workspace broadcast and gathers compact, unicast responses.
 The account IDs in its output come from Beam webhook metadata rather than the

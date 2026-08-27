@@ -153,13 +153,21 @@ func runShell(args []string) {
 		ping: func() {
 			doPing(*beamURL, workspaceID, selectedUser, route, *timeout, &nextID, &pendingID, responses, os.Stdout, os.Stderr, sendIPv4WithChannels)
 		},
-		put: func(path string) {
+		putRepo: func(path string) {
 			remotePath, err := uploadFileRPC(*beamURL, workspaceID, selectedUser, route, path, *timeout, &nextID, &pendingID, responses, sendFileWithChannels)
 			if err != nil {
-				fmt.Fprintln(os.Stderr, "[file upload error]", err)
+				fmt.Fprintln(os.Stderr, "[repository upload error]", err)
 				return
 			}
-			fmt.Printf("Uploaded %s -> %s\n", path, remotePath)
+			fmt.Printf("Uploaded through FileRepository: %s -> %s\n", path, remotePath)
+		},
+		putGrid: func(path string) {
+			remotePath, err := uploadFileDirectRPC(*beamURL, workspaceID, selectedUser, route, path, *timeout, &nextID, &pendingID, responses, sendIPv4WithChannels)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "[direct Grid upload error]", err)
+				return
+			}
+			fmt.Printf("Uploaded directly through Grid: %s -> %s\n", path, remotePath)
 		},
 	}
 
