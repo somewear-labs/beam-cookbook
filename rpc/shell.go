@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -153,6 +154,7 @@ func runShell(args []string) {
 			fmt.Fprintln(os.Stderr, "[send error]", err)
 			continue
 		}
+		log.Printf("[exec] send ok — waiting up to %s", *timeout)
 
 		start := time.Now()
 		stopTicker := make(chan struct{})
@@ -173,10 +175,12 @@ func runShell(args []string) {
 		case resp := <-responses:
 			close(stopTicker)
 			elapsed := time.Since(start)
+			log.Printf("[exec] response received for req_id=%d in %.2fs", id, elapsed.Seconds())
 			fmt.Printf("\r  %.2fs\n", elapsed.Seconds())
 			printResponse(resp.envelope)
 		case <-time.After(*timeout):
 			close(stopTicker)
+			log.Printf("[exec] timed out waiting for req_id=%d after %s", id, *timeout)
 			fmt.Printf("\r  %.2fs — [no response]\n", time.Since(start).Seconds())
 		}
 		// Clear pendingID so Beam webhook retries between commands don't
@@ -249,16 +253,19 @@ func doConnect(beamURL string, workspace int, targetUserID int64, timeout time.D
 		fmt.Fprintln(os.Stderr, "[connect send error]", err)
 		return
 	}
+	log.Printf("[connect] send ok — waiting up to %s for webhook response", timeout)
 
 	fmt.Printf("%s%sconnecting...%s", colorDim, colorCyan, colorReset)
 
 	select {
 	case resp := <-responses:
+		log.Printf("[connect] response received")
 		fmt.Print("\r\033[K") // clear the "connecting..." line
 		if c := resp.envelope.GetResponse().GetConnect(); c != nil {
 			printConnectBanner(c)
 		}
 	case <-time.After(timeout):
+		log.Printf("[connect] timed out after %s — no response", timeout)
 		fmt.Printf("\r\033[K%s[no response — is the server running?]%s\n\n", colorYellow, colorReset)
 	}
 }

@@ -142,6 +142,34 @@ Requires Go 1.22+ and (for `make proto`) `protoc` with `protoc-gen-go`.
 | `--max-response` *(server)* | `200` | Stdout truncation limit in bytes |
 | `--timeout` *(shell)* | `30s` | Response wait timeout |
 
+## Publishing a release
+
+Binaries live in `bin/` and are served from `gs://get-somewear-app/atakplugin/`. After building, upload and set public ACL:
+
+```bash
+# Build all platforms
+make build                          # macOS (native arch)
+GOARCH=amd64 make build-linux       # Linux x86_64 → bin/rpc_linux_amd64 (manual rename needed)
+make build-linux                    # Linux ARM64  → bin/rpc_linux_arm64 (manual rename needed)
+
+# Upload binaries
+gsutil -m cp -a public-read \
+  bin/rpc_darwin_arm64 \
+  bin/rpc_darwin_amd64 \
+  bin/rpc_linux_arm64 \
+  bin/rpc_linux_amd64 \
+  "gs://get-somewear-app/atakplugin/"
+
+# Upload installer script
+gsutil cp -a public-read install-rpc.sh "gs://get-somewear-app/atakplugin/install-rpc.sh"
+```
+
+Requires `gcloud auth login` with a Somewear GCP account. The public installer URL is:
+
+```
+https://get.somewear.app/atakplugin/install-rpc.sh
+```
+
 ## Adding a new RPC method
 
 1. Add request/response messages to `proto/rpc.proto`
