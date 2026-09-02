@@ -44,7 +44,7 @@ func TestSelectableShellTargetsFiltersAndSorts(t *testing.T) {
 		0:  discoveryTarget(0, "no-account", discoveryProtocolVersion, capabilityShell),
 	}
 
-	got := selectableShellTargets(targets, false)
+	got := selectableShellTargets(targets, nil)
 	if len(got) != 2 || got[0].accountID != 10 || got[1].accountID != 20 {
 		t.Fatalf("selectableShellTargets() = %+v", got)
 	}
@@ -53,9 +53,10 @@ func TestSelectableShellTargetsFiltersAndSorts(t *testing.T) {
 func TestSelectableShellTargetsRequiresSessionChannelCapability(t *testing.T) {
 	targets := map[int64]discoveredTarget{
 		1: discoveryTarget(1, "legacy", discoveryProtocolVersion, capabilityShell),
-		2: discoveryTarget(2, "current", discoveryProtocolVersion, capabilityShell|capabilitySessionChannels),
+		2: discoveryTarget(2, "current", discoveryProtocolVersion, capabilityShell|capabilitySessionChannels, rpcpb.SessionChannel_RADIO),
+		3: discoveryTarget(3, "wrong-channel", discoveryProtocolVersion, capabilityShell|capabilitySessionChannels, rpcpb.SessionChannel_CELLULAR),
 	}
-	got := selectableShellTargets(targets, true)
+	got := selectableShellTargets(targets, []rpcpb.SessionChannel{rpcpb.SessionChannel_RADIO})
 	if len(got) != 1 || got[0].accountID != 2 {
 		t.Fatalf("selectableShellTargets() = %+v", got)
 	}
@@ -76,13 +77,14 @@ func TestSingleTargetStillRequiresInteractiveSelection(t *testing.T) {
 	}
 }
 
-func discoveryTarget(accountID int64, hostname string, version, capabilities uint32) discoveredTarget {
+func discoveryTarget(accountID int64, hostname string, version, capabilities uint32, channels ...rpcpb.SessionChannel) discoveredTarget {
 	return discoveredTarget{
 		accountID: accountID,
 		response: &rpcpb.DiscoverResponse{
 			Hostname:        hostname,
 			ProtocolVersion: version,
 			Capabilities:    capabilities,
+			Channels:        channels,
 		},
 	}
 }
