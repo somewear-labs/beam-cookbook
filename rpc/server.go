@@ -183,6 +183,16 @@ func (s *rpcServer) acceptDiscovery(sourceUserID int64, requestID uint32) bool {
 }
 
 func (s *rpcServer) handleDiscover(reqID uint32, targetUserID int64, req *rpcpb.DiscoverRequest) {
+	var channels []rpcpb.SessionChannel
+	if len(req.GetChannels()) > 0 {
+		validated, err := validateSessionChannels(req.GetChannels())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  Ignoring discovery request with invalid channels: %v\n", err)
+			return
+		}
+		channels = validated
+	}
+
 	jitter := time.Duration(req.GetResponseJitterMs()) * time.Millisecond
 	if jitter > maxDiscoveryJitter {
 		jitter = maxDiscoveryJitter
@@ -201,6 +211,7 @@ func (s *rpcServer) handleDiscover(reqID uint32, targetUserID int64, req *rpcpb.
 				Hostname:        truncateRunes(hostname, maxDiscoveryHostnameRunes),
 				Arch:            truncateRunes(arch, maxDiscoveryArchRunes),
 				Capabilities:    capabilityShell | capabilitySessionChannels,
+				Channels:        channels,
 			}},
 		}},
 	}
@@ -209,7 +220,7 @@ func (s *rpcServer) handleDiscover(reqID uint32, targetUserID int64, req *rpcpb.
 		fmt.Fprintln(os.Stderr, "  Failed to marshal discovery response:", err)
 		return
 	}
-	if err := sendIPv4To(s.beamURL, s.workspaceID, targetUserID, b64); err != nil {
+	if err := sendIPv4WithChannels(s.beamURL, s.workspaceID, targetUserID, b64, channels); err != nil {
 		fmt.Fprintln(os.Stderr, "  Failed to send discovery response:", err)
 		return
 	}

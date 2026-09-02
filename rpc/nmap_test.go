@@ -1,6 +1,9 @@
 package main
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -47,6 +50,7 @@ func TestDiscoveryPayloadsStayWithinSatelliteBudget(t *testing.T) {
 		Payload: &rpcpb.Envelope_Request{Request: &rpcpb.RpcRequest{
 			Method: &rpcpb.RpcRequest_Discover{Discover: &rpcpb.DiscoverRequest{
 				ResponseJitterMs: 750,
+				Channels:         []rpcpb.SessionChannel{rpcpb.SessionChannel_RADIO},
 			}},
 		}},
 	}
@@ -65,6 +69,7 @@ func TestDiscoveryPayloadsStayWithinSatelliteBudget(t *testing.T) {
 				Hostname:        strings.Repeat("h", maxDiscoveryHostnameRunes),
 				Arch:            strings.Repeat("a", maxDiscoveryArchRunes),
 				Capabilities:    capabilityShell,
+				Channels:        []rpcpb.SessionChannel{rpcpb.SessionChannel_RADIO},
 			}},
 		}},
 	}
@@ -73,6 +78,73 @@ func TestDiscoveryPayloadsStayWithinSatelliteBudget(t *testing.T) {
 	}
 	if size := proto.Size(response); size > 80 {
 		t.Fatalf("maximum discovery response is %d bytes; want <= 80", size)
+	}
+}
+
+func TestConstrainedDiscoveryProbeUsesRequestedChannels(t *testing.T) {
+	var request struct {
+		WorkspaceID int      `json:"workspaceId"`
+		Channels    []string `json:"channels"`
+		IPv4        struct {
+			Payload string `json:"payload"`
+		} `json:"ipv4"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/package/async" {
+			t.Errorf("path = %q, want /api/package/async", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	channels := []rpcpb.SessionChannel{rpcpb.SessionChannel_RADIO}
+	if err := sendDiscoveryProbe(server.URL, 22902, 0, 42, channels); err != nil {
+		t.Fatal(err)
+	}
+	if request.WorkspaceID != 22902 || len(request.Channels) != 1 || request.Channels[0] != "Radio" {
+		t.Fatalf("routing request = %+v", request)
+	}
+	envelope, err := unmarshalEnvelope(request.IPv4.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sameSessionChannels(envelope.GetRequest().GetDiscover().GetChannels(), channels) {
+		t.Fatalf("probe channels = %v, want %v", envelope.GetRequest().GetDiscover().GetChannels(), channels)
+	}
+}
+
+func TestConstrainedDiscoveryResponseUsesRequestedChannels(t *testing.T) {
+	var request struct {
+		TargetUserID int64    `json:"targetUserId"`
+		Channels     []string `json:"channels"`
+		IPv4         struct {
+			Payload string `json:"payload"`
+		} `json:"ipv4"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	channels := []rpcpb.SessionChannel{rpcpb.SessionChannel_RADIO}
+	s := rpcServer{workspaceID: 22902, beamURL: server.URL}
+	s.handleDiscover(42, 384899, &rpcpb.DiscoverRequest{Channels: channels})
+
+	if request.TargetUserID != 384899 || len(request.Channels) != 1 || request.Channels[0] != "Radio" {
+		t.Fatalf("routing request = %+v", request)
+	}
+	envelope, err := unmarshalEnvelope(request.IPv4.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sameSessionChannels(envelope.GetResponse().GetDiscover().GetChannels(), channels) {
+		t.Fatalf("response channels = %v, want %v", envelope.GetResponse().GetDiscover().GetChannels(), channels)
 	}
 }
 
