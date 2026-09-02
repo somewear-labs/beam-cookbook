@@ -9,6 +9,7 @@ const usage = `usage: rpc <command> [options]
 
 Commands:
   server   Run the RPC webhook server (on the remote machine)
+  nmap     Discover Grid Remote Shell targets in the workspace
   shell    Start an interactive remote shell (on the local machine)
   send     Send a single command
 
@@ -24,6 +25,8 @@ func main() {
 	switch os.Args[1] {
 	case "server":
 		runServer(os.Args[2:])
+	case "nmap":
+		runNmap(os.Args[2:])
 	case "shell":
 		runShell(os.Args[2:])
 	case "send":

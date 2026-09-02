@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	rpcpb "somewear/rpc/proto"
 )
@@ -21,24 +23,29 @@ const defaultMaxResponse = 200
 func runServer(args []string) {
 	fs := flag.NewFlagSet("server", flag.ExitOnError)
 	port := fs.Int("port", 9091, "Port to listen on")
-	workspace := fs.Int("workspace", defaultWorkspaceID, "Somewear workspace ID")
 	maxResponse := fs.Int("max-response", defaultMaxResponse, "Max stdout bytes to return")
 	beamURL := fs.String("beam-url", defaultBeamURL, "Beam API URL for sending responses")
 	fs.Parse(args)
+	workspaceID, err := activeWorkspaceID(*beamURL)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "server:", err)
+		os.Exit(1)
+	}
 
 	cwd, _ := os.Getwd()
 	s := &rpcServer{
-		workspaceID: *workspace,
+		workspaceID: workspaceID,
 		maxResponse: *maxResponse,
 		beamURL:     *beamURL,
 		cwd:         cwd,
+		discoveries: make(map[discoveryKey]time.Time),
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleWebhook)
 
 	fmt.Printf("RPC server listening on :%d\n", *port)
-	fmt.Printf("  Workspace ID : %d\n", *workspace)
+	fmt.Printf("  Beam workspace: %d\n", workspaceID)
 	fmt.Printf("  Max response : %d bytes\n", *maxResponse)
 
 	if err := http.ListenAndServe(fmt.Sprintf(":%d", *port), mux); err != nil {
@@ -53,6 +60,13 @@ type rpcServer struct {
 	beamURL     string
 	cwd         string
 	cwdMu       sync.Mutex
+	discoveryMu sync.Mutex
+	discoveries map[discoveryKey]time.Time
+}
+
+type discoveryKey struct {
+	sourceUserID int64
+	requestID    uint32
 }
 
 func (s *rpcServer) handleWebhook(w http.ResponseWriter, r *http.Request) {
@@ -64,10 +78,11 @@ func (s *rpcServer) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	fmt.Printf("POST body: %s\n", body)
 	w.WriteHeader(http.StatusOK)
 
-	for _, env := range parseWebhookEnvelopes(body) {
+	for _, inbound := range parseWebhookEnvelopes(body) {
+		env := inbound.envelope
 		switch env.Payload.(type) {
 		case *rpcpb.Envelope_Request:
-			s.handleRequest(env)
+			s.handleRequest(env, inbound.sourceUserID)
 		case *rpcpb.Envelope_Response:
 			fmt.Printf("[req %d] Received response (ignoring)\n", env.RequestId)
 		default:
@@ -76,19 +91,75 @@ func (s *rpcServer) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *rpcServer) handleRequest(env *rpcpb.Envelope) {
+func (s *rpcServer) handleRequest(env *rpcpb.Envelope, sourceUserID int64) {
 	req := env.GetRequest()
 	switch req.Method.(type) {
 	case *rpcpb.RpcRequest_Exec:
-		s.handleExec(env.RequestId, req.GetExec())
+		s.handleExec(env.RequestId, sourceUserID, req.GetExec())
 	case *rpcpb.RpcRequest_Connect:
-		s.handleConnect(env.RequestId)
+		s.handleConnect(env.RequestId, sourceUserID)
+	case *rpcpb.RpcRequest_Discover:
+		if s.acceptDiscovery(sourceUserID, env.RequestId) {
+			go s.handleDiscover(env.RequestId, sourceUserID, req.GetDiscover())
+		}
 	default:
-		s.sendError(env.RequestId, fmt.Sprintf("unknown method: %T", req.Method))
+		s.sendError(env.RequestId, sourceUserID, fmt.Sprintf("unknown method: %T", req.Method))
 	}
 }
 
-func (s *rpcServer) handleExec(reqID uint32, req *rpcpb.ExecRequest) {
+func (s *rpcServer) acceptDiscovery(sourceUserID int64, requestID uint32) bool {
+	s.discoveryMu.Lock()
+	defer s.discoveryMu.Unlock()
+
+	now := time.Now()
+	for key, seenAt := range s.discoveries {
+		if now.Sub(seenAt) > time.Minute {
+			delete(s.discoveries, key)
+		}
+	}
+	key := discoveryKey{sourceUserID: sourceUserID, requestID: requestID}
+	if _, exists := s.discoveries[key]; exists {
+		return false
+	}
+	s.discoveries[key] = now
+	return true
+}
+
+func (s *rpcServer) handleDiscover(reqID uint32, targetUserID int64, req *rpcpb.DiscoverRequest) {
+	jitter := time.Duration(req.GetResponseJitterMs()) * time.Millisecond
+	if jitter > maxDiscoveryJitter {
+		jitter = maxDiscoveryJitter
+	}
+	if jitter > 0 {
+		time.Sleep(time.Duration(rand.Int64N(int64(jitter) + 1)))
+	}
+
+	hostname, _ := os.Hostname()
+	arch, _ := collectCPUInfo()
+	resp := &rpcpb.Envelope{
+		RequestId: reqID,
+		Payload: &rpcpb.Envelope_Response{Response: &rpcpb.RpcResponse{
+			Result: &rpcpb.RpcResponse_Discover{Discover: &rpcpb.DiscoverResponse{
+				ProtocolVersion: discoveryProtocolVersion,
+				Hostname:        truncateRunes(hostname, maxDiscoveryHostnameRunes),
+				Arch:            truncateRunes(arch, maxDiscoveryArchRunes),
+				Capabilities:    capabilityShell,
+			}},
+		}},
+	}
+	b64, err := marshalEnvelope(resp)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "  Failed to marshal discovery response:", err)
+		return
+	}
+	if err := sendIPv4To(s.beamURL, s.workspaceID, targetUserID, b64); err != nil {
+		fmt.Fprintln(os.Stderr, "  Failed to send discovery response:", err)
+		return
+	}
+	fmt.Printf("[req %d] Discovery response sent to account %d\n", reqID, targetUserID)
+}
+
+func (s *rpcServer) handleExec(reqID uint32, targetUserID int64, req *rpcpb.ExecRequest) {
 	s.cwdMu.Lock()
 	cwd := s.cwd
 	s.cwdMu.Unlock()
@@ -159,14 +230,14 @@ func (s *rpcServer) handleExec(reqID uint32, req *rpcpb.ExecRequest) {
 		fmt.Fprintln(os.Stderr, "  Failed to marshal response:", err)
 		return
 	}
-	if err := sendIPv4(s.beamURL, s.workspaceID, b64); err != nil {
+	if err := sendIPv4To(s.beamURL, s.workspaceID, targetUserID, b64); err != nil {
 		fmt.Fprintln(os.Stderr, "  Failed to send response:", err)
 		return
 	}
 	fmt.Printf("  [req %d] Response sent, %d bytes, exit=%d\n", reqID, len(out), exitCode)
 }
 
-func (s *rpcServer) handleConnect(reqID uint32) {
+func (s *rpcServer) handleConnect(reqID uint32, targetUserID int64) {
 	hostname, _ := os.Hostname()
 
 	var ips []string
@@ -217,7 +288,7 @@ func (s *rpcServer) handleConnect(reqID uint32) {
 		fmt.Fprintln(os.Stderr, "  Failed to marshal connect response:", err)
 		return
 	}
-	if err := sendIPv4(s.beamURL, s.workspaceID, b64); err != nil {
+	if err := sendIPv4To(s.beamURL, s.workspaceID, targetUserID, b64); err != nil {
 		fmt.Fprintln(os.Stderr, "  Failed to send connect response:", err)
 	}
 }
@@ -257,7 +328,7 @@ func collectCPUInfo() (arch, model string) {
 	return arch, ""
 }
 
-func (s *rpcServer) sendError(reqID uint32, message string) {
+func (s *rpcServer) sendError(reqID uint32, targetUserID int64, message string) {
 	resp := &rpcpb.Envelope{
 		RequestId: reqID,
 		Payload: &rpcpb.Envelope_Response{
@@ -272,5 +343,5 @@ func (s *rpcServer) sendError(reqID uint32, message string) {
 	if err != nil {
 		return
 	}
-	sendIPv4(s.beamURL, s.workspaceID, b64)
+	sendIPv4To(s.beamURL, s.workspaceID, targetUserID, b64)
 }
