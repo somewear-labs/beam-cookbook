@@ -205,10 +205,7 @@ func (s *rpcServer) handleExec(reqID uint32, targetUserID int64, req *rpcpb.Exec
 		out = stderr.Bytes()
 	}
 
-	truncated := len(out) > s.maxResponse
-	if truncated {
-		out = out[:s.maxResponse]
-	}
+	out, truncated := truncateResponse(out, s.maxResponse)
 
 	resp := &rpcpb.Envelope{
 		RequestId: reqID,
@@ -235,6 +232,19 @@ func (s *rpcServer) handleExec(reqID uint32, targetUserID int64, req *rpcpb.Exec
 		return
 	}
 	fmt.Printf("  [req %d] Response sent, %d bytes, exit=%d\n", reqID, len(out), exitCode)
+}
+
+func truncateResponse(out []byte, maxBytes int) ([]byte, bool) {
+	truncated := len(out) > maxBytes
+	if truncated {
+		out = out[:maxBytes]
+	}
+
+	// Protobuf strings must contain valid UTF-8. A byte limit can split a
+	// multi-byte character (for example, the box-drawing characters in Beam's
+	// tables), so discard an incomplete or otherwise invalid sequence before
+	// marshaling the response.
+	return bytes.ToValidUTF8(out, nil), truncated
 }
 
 func (s *rpcServer) handleConnect(reqID uint32, targetUserID int64) {
