@@ -37,12 +37,18 @@ const (
 
 type gridStreamKey struct {
 	peerAccountID int64
+	sessionID     uint64
 	streamID      uint32
 }
 
 type Frame = rpcpb.GridStreamFrame
 
-type Sender func(peerAccountID int64, frame *Frame) error
+type Route struct {
+	SessionID uint64
+	Channels  []rpcpb.SessionChannel
+}
+
+type Sender func(peerAccountID int64, route Route, constrained bool, frame *Frame) error
 type Handler func(*Stream)
 
 type Endpoint struct {
@@ -82,7 +88,7 @@ func (e *Endpoint) Register(service string, handler Handler) error {
 	return nil
 }
 
-func (e *Endpoint) Open(ctx context.Context, peerAccountID int64, service string) (*Stream, error) {
+func (e *Endpoint) Open(ctx context.Context, peerAccountID int64, route Route, service string) (*Stream, error) {
 	if peerAccountID <= 0 {
 		return nil, errors.New("grid stream peer account must be greater than zero")
 	}
@@ -96,7 +102,7 @@ func (e *Endpoint) Open(ctx context.Context, peerAccountID int64, service string
 		if streamID == 0 {
 			continue
 		}
-		candidate := newStream(e, peerAccountID, streamID, service, true, 0)
+		candidate := newStream(e, peerAccountID, route, streamID, service, true, 0)
 		key := candidate.key()
 		e.mu.Lock()
 		e.expireTombstonesLocked()
@@ -120,7 +126,7 @@ func (e *Endpoint) Open(ctx context.Context, peerAccountID int64, service string
 				ReceiveWindowBytes: gridStreamDefaultWindow,
 			},
 		},
-	})
+	}, false)
 	if err != nil {
 		stream.fail(err)
 		return nil, err
@@ -138,14 +144,14 @@ func (e *Endpoint) Open(ctx context.Context, peerAccountID int64, service string
 	}
 }
 
-func (e *Endpoint) Handle(peerAccountID int64, frame *Frame) {
+func (e *Endpoint) Handle(peerAccountID int64, route Route, frame *Frame) {
 	if peerAccountID <= 0 || frame.GetStreamId() == 0 {
 		return
 	}
 
-	key := gridStreamKey{peerAccountID: peerAccountID, streamID: frame.GetStreamId()}
+	key := gridStreamKey{peerAccountID: peerAccountID, sessionID: route.SessionID, streamID: frame.GetStreamId()}
 	if open := frame.GetOpen(); open != nil {
-		e.handleOpen(key, open)
+		e.handleOpen(key, route, open)
 		return
 	}
 
@@ -174,7 +180,7 @@ func (e *Endpoint) Handle(peerAccountID int64, frame *Frame) {
 	}
 }
 
-func (e *Endpoint) handleOpen(key gridStreamKey, open *rpcpb.GridStreamOpen) {
+func (e *Endpoint) handleOpen(key gridStreamKey, route Route, open *rpcpb.GridStreamOpen) {
 	if open.GetProtocolVersion() != gridStreamProtocolVersion ||
 		open.GetService() == "" || len(open.GetService()) > gridStreamMaxServiceBytes ||
 		!validGridStreamWindow(open.GetReceiveWindowBytes()) {
@@ -200,7 +206,7 @@ func (e *Endpoint) handleOpen(key gridStreamKey, open *rpcpb.GridStreamOpen) {
 		e.sendReset(key, rpcpb.GridStreamReset_PEER_UNAVAILABLE, "service is not available")
 		return
 	}
-	stream := newStream(e, key.peerAccountID, key.streamID, open.GetService(), false, uint64(open.GetReceiveWindowBytes()))
+	stream := newStream(e, key.peerAccountID, route, key.streamID, open.GetService(), false, uint64(open.GetReceiveWindowBytes()))
 	e.streams[key] = stream
 	e.mu.Unlock()
 
@@ -229,7 +235,7 @@ func (e *Endpoint) expireTombstonesLocked() {
 }
 
 func (e *Endpoint) sendReset(key gridStreamKey, reason rpcpb.GridStreamReset_Reason, message string) {
-	_ = e.send(key.peerAccountID, &rpcpb.GridStreamFrame{
+	_ = e.send(key.peerAccountID, Route{SessionID: key.sessionID}, false, &rpcpb.GridStreamFrame{
 		StreamId: key.streamID,
 		Payload: &rpcpb.GridStreamFrame_Reset_{
 			Reset_: &rpcpb.GridStreamReset{Reason: reason, Message: message},
@@ -244,6 +250,7 @@ func validGridStreamWindow(window uint32) bool {
 type Stream struct {
 	endpoint      *Endpoint
 	peerAccountID int64
+	route         Route
 	streamID      uint32
 	service       string
 	initiator     bool
@@ -270,24 +277,28 @@ type Stream struct {
 	removeOnce       sync.Once
 }
 
-func newStream(endpoint *Endpoint, peerAccountID int64, streamID uint32, service string, initiator bool, peerWindow uint64) *Stream {
+func newStream(endpoint *Endpoint, peerAccountID int64, route Route, streamID uint32, service string, initiator bool, peerWindow uint64) *Stream {
 	stream := &Stream{
 		endpoint:      endpoint,
 		peerAccountID: peerAccountID,
-		streamID:      streamID,
-		service:       service,
-		initiator:     initiator,
-		pendingData:   make(map[uint64][]byte),
-		peerWindow:    peerWindow,
-		openResult:    make(chan error, 1),
-		done:          make(chan struct{}),
+		route: Route{
+			SessionID: route.SessionID,
+			Channels:  append([]rpcpb.SessionChannel(nil), route.Channels...),
+		},
+		streamID:    streamID,
+		service:     service,
+		initiator:   initiator,
+		pendingData: make(map[uint64][]byte),
+		peerWindow:  peerWindow,
+		openResult:  make(chan error, 1),
+		done:        make(chan struct{}),
 	}
 	stream.cond = sync.NewCond(&stream.mu)
 	return stream
 }
 
 func (s *Stream) key() gridStreamKey {
-	return gridStreamKey{peerAccountID: s.peerAccountID, streamID: s.streamID}
+	return gridStreamKey{peerAccountID: s.peerAccountID, sessionID: s.route.SessionID, streamID: s.streamID}
 }
 
 func (s *Stream) Service() string {
@@ -322,7 +333,7 @@ func (s *Stream) Read(p []byte) (int, error) {
 		n, _ := s.readBuffer.Read(p)
 		ack := s.ackLocked()
 		s.mu.Unlock()
-		_ = s.sendFrame(ack)
+		_ = s.sendFrame(ack, true)
 		return n, nil
 	}
 	if s.terminalErr != nil {
@@ -366,7 +377,7 @@ func (s *Stream) Write(p []byte) (int, error) {
 			Payload: &rpcpb.GridStreamFrame_Data{
 				Data: &rpcpb.GridStreamData{Offset: offset, Payload: chunk},
 			},
-		})
+		}, true)
 		if err != nil {
 			s.fail(err)
 			return written, err
@@ -398,7 +409,7 @@ func (s *Stream) CloseWrite() error {
 		Payload: &rpcpb.GridStreamFrame_HalfClose{
 			HalfClose: &rpcpb.GridStreamHalfClose{FinalOffset: finalOffset},
 		},
-	})
+	}, true)
 }
 
 func (s *Stream) CloseWithCode(exitCode int32, message string) error {
@@ -422,7 +433,7 @@ func (s *Stream) CloseWithCode(exitCode int32, message string) error {
 		Payload: &rpcpb.GridStreamFrame_Close{
 			Close: &rpcpb.GridStreamClose{FinalOffset: finalOffset, ExitCode: exitCode, Message: message},
 		},
-	})
+	}, true)
 	s.finish()
 	return err
 }
@@ -470,7 +481,7 @@ func (s *Stream) handleData(data *rpcpb.GridStreamData) {
 	if end < offset || end <= s.receiveOffset {
 		ack := s.ackLocked()
 		s.mu.Unlock()
-		_ = s.sendFrame(ack)
+		_ = s.sendFrame(ack, true)
 		return
 	}
 	if offset < s.receiveOffset || end > s.receiveOffset+uint64(gridStreamDefaultWindow) {
@@ -483,7 +494,7 @@ func (s *Stream) handleData(data *rpcpb.GridStreamData) {
 		if offset == pendingOffset && bytes.Equal(payload, pending) {
 			ack := s.ackLocked()
 			s.mu.Unlock()
-			_ = s.sendFrame(ack)
+			_ = s.sendFrame(ack, true)
 			return
 		}
 		if offset < pendingEnd && pendingOffset < end {
@@ -513,7 +524,7 @@ func (s *Stream) handleData(data *rpcpb.GridStreamData) {
 	ack := s.ackLocked()
 	s.cond.Broadcast()
 	s.mu.Unlock()
-	_ = s.sendFrame(ack)
+	_ = s.sendFrame(ack, true)
 }
 
 func (s *Stream) handleAck(ack *rpcpb.GridStreamAck) {
@@ -573,13 +584,13 @@ func (s *Stream) sendAccept() error {
 		Payload: &rpcpb.GridStreamFrame_Accept{
 			Accept: &rpcpb.GridStreamAccept{ReceiveWindowBytes: gridStreamDefaultWindow},
 		},
-	})
+	}, false)
 }
 
-func (s *Stream) sendFrame(frame *rpcpb.GridStreamFrame) error {
+func (s *Stream) sendFrame(frame *rpcpb.GridStreamFrame, constrained bool) error {
 	s.sendMu.Lock()
 	defer s.sendMu.Unlock()
-	return s.endpoint.send(s.peerAccountID, frame)
+	return s.endpoint.send(s.peerAccountID, s.route, constrained, frame)
 }
 
 func (s *Stream) ackLocked() *rpcpb.GridStreamFrame {
@@ -605,8 +616,14 @@ func (s *Stream) reset(reason rpcpb.GridStreamReset_Reason, message string) {
 		Payload: &rpcpb.GridStreamFrame_Reset_{
 			Reset_: &rpcpb.GridStreamReset{Reason: reason, Message: message},
 		},
-	})
+	}, s.established())
 	s.fail(fmt.Errorf("grid stream reset (%s): %s", reason, message))
+}
+
+func (s *Stream) established() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.peerWindow > 0
 }
 
 func (s *Stream) fail(err error) {

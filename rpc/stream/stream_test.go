@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"reflect"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -12,6 +14,107 @@ import (
 )
 
 const gridStreamTestTimeout = 5 * time.Second
+
+func TestGridStreamConstrainsOnlyEstablishedFrames(t *testing.T) {
+	type sentFrame struct {
+		kind        string
+		route       Route
+		constrained bool
+	}
+	var mu sync.Mutex
+	var sent []sentFrame
+	record := func(frame *rpcpb.GridStreamFrame, route Route, constrained bool) {
+		kind := "unknown"
+		switch frame.Payload.(type) {
+		case *rpcpb.GridStreamFrame_Open:
+			kind = "open"
+		case *rpcpb.GridStreamFrame_Accept:
+			kind = "accept"
+		case *rpcpb.GridStreamFrame_Data:
+			kind = "data"
+		case *rpcpb.GridStreamFrame_Ack:
+			kind = "ack"
+		case *rpcpb.GridStreamFrame_HalfClose:
+			kind = "half-close"
+		case *rpcpb.GridStreamFrame_Close:
+			kind = "close"
+		}
+		mu.Lock()
+		sent = append(sent, sentFrame{kind: kind, route: route, constrained: constrained})
+		mu.Unlock()
+	}
+
+	var left, right *Endpoint
+	left = NewEndpoint(func(_ int64, route Route, constrained bool, frame *rpcpb.GridStreamFrame) error {
+		record(frame, route, constrained)
+		right.Handle(1, route, frame)
+		return nil
+	})
+	right = NewEndpoint(func(_ int64, route Route, constrained bool, frame *rpcpb.GridStreamFrame) error {
+		record(frame, route, constrained)
+		left.Handle(2, route, frame)
+		return nil
+	})
+	if err := right.Register("test", func(stream *Stream) {
+		_, _ = io.ReadAll(stream)
+		_, _ = stream.Write([]byte("ok"))
+		_ = stream.Close()
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	route := Route{SessionID: 42, Channels: []rpcpb.SessionChannel{rpcpb.SessionChannel_RADIO}}
+	ctx, cancel := context.WithTimeout(context.Background(), gridStreamTestTimeout)
+	defer cancel()
+	client, err := left.Open(ctx, 2, route, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Write([]byte("hello")); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.ReadAll(client); err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	found := make(map[string]bool)
+	for _, outbound := range sent {
+		found[outbound.kind] = true
+		if outbound.route.SessionID != route.SessionID || !reflect.DeepEqual(outbound.route.Channels, route.Channels) {
+			t.Fatalf("%s route = %+v", outbound.kind, outbound.route)
+		}
+		wantConstrained := outbound.kind != "open" && outbound.kind != "accept"
+		if outbound.constrained != wantConstrained {
+			t.Errorf("%s constrained = %v, want %v", outbound.kind, outbound.constrained, wantConstrained)
+		}
+	}
+	for _, kind := range []string{"open", "accept", "data", "ack", "half-close", "close"} {
+		if !found[kind] {
+			t.Errorf("did not send %s frame", kind)
+		}
+	}
+}
+
+func TestGridStreamResetUsesEstablishedRoute(t *testing.T) {
+	var constrained []bool
+	endpoint := NewEndpoint(func(_ int64, _ Route, useChannels bool, _ *rpcpb.GridStreamFrame) error {
+		constrained = append(constrained, useChannels)
+		return nil
+	})
+	route := Route{SessionID: 42, Channels: []rpcpb.SessionChannel{rpcpb.SessionChannel_RADIO}}
+	pending := newStream(endpoint, 2, route, 1, "test", true, 0)
+	pending.Reset(ResetCancelled, "pending")
+	established := newStream(endpoint, 2, route, 2, "test", false, gridStreamDefaultWindow)
+	established.Reset(ResetCancelled, "established")
+	if !reflect.DeepEqual(constrained, []bool{false, true}) {
+		t.Fatalf("reset constraints = %v, want [false true]", constrained)
+	}
+}
 
 func TestGridStreamRoundTrip(t *testing.T) {
 	left, right := linkedGridStreamEndpoints()
@@ -45,7 +148,7 @@ func TestGridStreamRoundTrip(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), gridStreamTestTimeout)
 	defer cancel()
-	stream, err := left.Open(ctx, 2, "atak.logs.v1")
+	stream, err := left.Open(ctx, 2, Route{}, "atak.logs.v1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,11 +199,11 @@ func TestGridStreamRoundTrip(t *testing.T) {
 
 func TestGridStreamReordersAndDeduplicatesData(t *testing.T) {
 	var sent []*rpcpb.GridStreamFrame
-	endpoint := NewEndpoint(func(_ int64, frame *rpcpb.GridStreamFrame) error {
+	endpoint := NewEndpoint(func(_ int64, _ Route, _ bool, frame *rpcpb.GridStreamFrame) error {
 		sent = append(sent, frame)
 		return nil
 	})
-	stream := newStream(endpoint, 2, 7, "test", false, gridStreamDefaultWindow)
+	stream := newStream(endpoint, 2, Route{}, 7, "test", false, gridStreamDefaultWindow)
 	endpoint.streams[stream.key()] = stream
 
 	stream.handleData(&rpcpb.GridStreamData{Offset: 3, Payload: []byte("def")})
@@ -136,7 +239,7 @@ func TestGridStreamDuplicateOpenRunsHandlerOnce(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), gridStreamTestTimeout)
-	stream, err := left.Open(ctx, 2, "test")
+	stream, err := left.Open(ctx, 2, Route{}, "test")
 	cancel()
 	if err != nil {
 		t.Fatal(err)
@@ -147,7 +250,7 @@ func TestGridStreamDuplicateOpenRunsHandlerOnce(t *testing.T) {
 		t.Fatal("handler did not start")
 	}
 
-	right.Handle(1, &rpcpb.GridStreamFrame{
+	right.Handle(1, Route{}, &rpcpb.GridStreamFrame{
 		StreamId: stream.streamID,
 		Payload: &rpcpb.GridStreamFrame_Open{Open: &rpcpb.GridStreamOpen{
 			ProtocolVersion:    gridStreamProtocolVersion,
@@ -170,7 +273,7 @@ func TestGridStreamRejectsOversizedData(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), gridStreamTestTimeout)
-	stream, err := left.Open(ctx, 2, "test")
+	stream, err := left.Open(ctx, 2, Route{}, "test")
 	cancel()
 	if err != nil {
 		t.Fatal(err)
@@ -186,12 +289,12 @@ func TestGridStreamRejectsOversizedData(t *testing.T) {
 
 func linkedGridStreamEndpoints() (*Endpoint, *Endpoint) {
 	var left, right *Endpoint
-	left = NewEndpoint(func(_ int64, frame *rpcpb.GridStreamFrame) error {
-		right.Handle(1, frame)
+	left = NewEndpoint(func(_ int64, route Route, _ bool, frame *rpcpb.GridStreamFrame) error {
+		right.Handle(1, route, frame)
 		return nil
 	})
-	right = NewEndpoint(func(_ int64, frame *rpcpb.GridStreamFrame) error {
-		left.Handle(2, frame)
+	right = NewEndpoint(func(_ int64, route Route, _ bool, frame *rpcpb.GridStreamFrame) error {
+		left.Handle(2, route, frame)
 		return nil
 	})
 	return left, right

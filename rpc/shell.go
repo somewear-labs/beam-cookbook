@@ -13,6 +13,7 @@ import (
 	"time"
 
 	rpcpb "somewear/rpc/proto"
+	"somewear/rpc/stream"
 )
 
 func runShell(args []string) {
@@ -52,6 +53,17 @@ func runShell(args []string) {
 	var expectedSource atomic.Int64
 	responses := make(chan inboundEnvelope, 64)
 	var responseIdempotency idempotencyGuard
+	streamRoute := stream.Route{SessionID: route.id, Channels: route.channels}
+	streams := stream.NewEndpoint(func(peerAccountID int64, outboundRoute stream.Route, constrained bool, frame *rpcpb.GridStreamFrame) error {
+		return sendGridStreamFrame(*beamURL, workspaceID, peerAccountID, sessionRoute{id: outboundRoute.SessionID, channels: outboundRoute.Channels}, constrained, frame)
+	})
+	outputStreams := make(chan *stream.Stream, 1)
+	if err := stream.RegisterCommandOutput(streams, func(output *stream.Stream) {
+		outputStreams <- output
+	}); err != nil {
+		fmt.Fprintln(os.Stderr, "GridStream service error:", err)
+		return
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -59,6 +71,12 @@ func runShell(args []string) {
 		w.WriteHeader(http.StatusOK)
 		for _, inbound := range parseWebhookEnvelopes(body) {
 			env := inbound.envelope
+			if frame := env.GetGridStream(); frame != nil {
+				if env.GetSessionId() == route.id && (expectedSource.Load() == 0 || inbound.sourceUserID == expectedSource.Load()) {
+					streams.Handle(inbound.sourceUserID, streamRoute, frame)
+				}
+				continue
+			}
 			if env.GetResponse() != nil && env.RequestId == pendingID.Load() &&
 				(expectedSource.Load() == 0 || inbound.sourceUserID == expectedSource.Load()) &&
 				responseIdempotency.acceptResponse(inbound.sourceUserID, env) {
@@ -164,7 +182,7 @@ func runShell(args []string) {
 			Payload: &rpcpb.Envelope_Request{
 				Request: &rpcpb.RpcRequest{
 					Method: &rpcpb.RpcRequest_Exec{
-						Exec: &rpcpb.ExecRequest{Command: command},
+						Exec: &rpcpb.ExecRequest{Command: command, StreamOutput: true},
 					},
 				},
 			},
@@ -196,10 +214,14 @@ func runShell(args []string) {
 		}()
 
 		select {
-		case resp := <-responses:
+		case output := <-outputStreams:
 			close(stopTicker)
 			elapsed := time.Since(start)
 			fmt.Printf("\r  %.2fs\n", elapsed.Seconds())
+			printCommandOutput(output, os.Stdout, os.Stderr)
+		case resp := <-responses:
+			close(stopTicker)
+			fmt.Print("\r\033[K")
 			printResponse(resp.envelope)
 		case <-time.After(*timeout):
 			close(stopTicker)
@@ -235,7 +257,7 @@ func selectableShellTargets(discovered map[int64]discoveredTarget, requiredChann
 	compatible := make(map[int64]discoveredTarget)
 	for accountID, target := range discovered {
 		resp := target.response
-		requiredCapabilities := capabilityShell
+		requiredCapabilities := capabilityShell | capabilityStreamOutput
 		if len(requiredChannels) > 0 {
 			requiredCapabilities |= capabilitySessionChannels
 		}
@@ -246,6 +268,43 @@ func selectableShellTargets(discovered map[int64]discoveredTarget, requiredChann
 		}
 	}
 	return sortedDiscoveredTargets(compatible)
+}
+
+func printCommandOutput(output *stream.Stream, stdout, stderr io.Writer) {
+	writer := &terminalStreamWriter{writer: stdout}
+	if _, err := io.Copy(writer, output); err != nil {
+		fmt.Fprintln(stderr, "[stream read error]", err)
+		return
+	}
+	if writer.needsNewline() {
+		fmt.Fprintln(stdout)
+	}
+	if exitCode, message, closed := output.CloseStatus(); closed && exitCode != 0 {
+		if message == "" {
+			fmt.Fprintf(stderr, "  [exit %d]\n", exitCode)
+		} else {
+			fmt.Fprintf(stderr, "  [exit %d: %s]\n", exitCode, message)
+		}
+	}
+}
+
+type terminalStreamWriter struct {
+	writer   io.Writer
+	wrote    bool
+	lastByte byte
+}
+
+func (w *terminalStreamWriter) Write(p []byte) (int, error) {
+	n, err := w.writer.Write(p)
+	if n > 0 {
+		w.wrote = true
+		w.lastByte = p[n-1]
+	}
+	return n, err
+}
+
+func (w *terminalStreamWriter) needsNewline() bool {
+	return w.wrote && w.lastByte != '\n'
 }
 
 const (

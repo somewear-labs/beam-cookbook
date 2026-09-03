@@ -112,6 +112,7 @@ message RpcResponse {
 
 message ExecRequest {
   string command = 1;
+  bool stream_output = 2;
 }
 
 message ExecResponse {

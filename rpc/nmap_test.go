@@ -23,7 +23,7 @@ func TestDiscoveryEnvelopeRoundTrip(t *testing.T) {
 						ProtocolVersion: discoveryProtocolVersion,
 						Hostname:        "orin",
 						Arch:            "aarch64",
-						Capabilities:    capabilityShell,
+						Capabilities:    capabilityShell | capabilityStreamOutput,
 					},
 				},
 			},
@@ -68,7 +68,7 @@ func TestDiscoveryPayloadsStayWithinSatelliteBudget(t *testing.T) {
 				ProtocolVersion: discoveryProtocolVersion,
 				Hostname:        strings.Repeat("h", maxDiscoveryHostnameRunes),
 				Arch:            strings.Repeat("a", maxDiscoveryArchRunes),
-				Capabilities:    capabilityShell,
+				Capabilities:    capabilityShell | capabilityStreamOutput,
 				Channels:        []rpcpb.SessionChannel{rpcpb.SessionChannel_RADIO},
 			}},
 		}},
@@ -164,6 +164,9 @@ func TestAcceptDiscoveryDeduplicatesWebhookRetries(t *testing.T) {
 func TestFormatCapabilities(t *testing.T) {
 	if got := formatCapabilities(capabilityShell); got != "shell" {
 		t.Fatalf("formatCapabilities(shell) = %q", got)
+	}
+	if got := formatCapabilities(capabilityShell | capabilityStreamOutput); got != "shell,stream-output" {
+		t.Fatalf("formatCapabilities(shell|stream-output) = %q", got)
 	}
 	if got := formatCapabilities(capabilityShell | 8); got != "shell,0x8" {
 		t.Fatalf("formatCapabilities(shell|unknown) = %q", got)
