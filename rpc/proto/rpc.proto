@@ -98,8 +98,11 @@ message PingResponse {
 
 // DiscoverRequest is broadcast to a workspace. response_jitter_ms asks peers
 // to spread their replies over a bounded window instead of responding at once.
+// When channels is non-empty, both the probe and its response must use exactly
+// that channel set.
 message DiscoverRequest {
   uint32 response_jitter_ms = 1;
+  repeated SessionChannel channels = 2;
 }
 
 // The sender's Beam account ID is deliberately omitted because Beam supplies
@@ -109,6 +112,7 @@ message DiscoverResponse {
   string hostname = 2;
   string arch = 3;
   uint32 capabilities = 4;
+  repeated SessionChannel channels = 5;
 }
 
 // --- Error ---

@@ -85,7 +85,7 @@ func runShell(args []string) {
 
 		discoveryID := randomRequestID()
 		pendingID.Store(discoveryID)
-		if err := sendDiscoveryProbe(*beamURL, workspaceID, *responseJitter, discoveryID); err != nil {
+		if err := sendDiscoveryProbe(*beamURL, workspaceID, *responseJitter, discoveryID, route.channels); err != nil {
 			pendingID.Store(0)
 			fmt.Fprintln(os.Stderr, "shell: discovery failed:", err)
 			return
@@ -94,7 +94,7 @@ func runShell(args []string) {
 		discovered := collectDiscoveryResponses(discoveryID, *discoveryTimeout, responses)
 		pendingID.Store(0)
 
-		selectable := selectableShellTargets(discovered, channelsSpecified)
+		selectable := selectableShellTargets(discovered, route.channels)
 		if len(selectable) == 0 {
 			fmt.Println("No compatible Grid Remote Shell targets found.")
 			return
@@ -208,12 +208,13 @@ func runShell(args []string) {
 	}
 }
 
-func sendDiscoveryProbe(beamURL string, workspace int, responseJitter time.Duration, requestID uint32) error {
+func sendDiscoveryProbe(beamURL string, workspace int, responseJitter time.Duration, requestID uint32, channels []rpcpb.SessionChannel) error {
 	env := &rpcpb.Envelope{
 		RequestId: requestID,
 		Payload: &rpcpb.Envelope_Request{Request: &rpcpb.RpcRequest{
 			Method: &rpcpb.RpcRequest_Discover{Discover: &rpcpb.DiscoverRequest{
 				ResponseJitterMs: uint32(responseJitter.Milliseconds()),
+				Channels:         channels,
 			}},
 		}},
 	}
@@ -221,21 +222,23 @@ func sendDiscoveryProbe(beamURL string, workspace int, responseJitter time.Durat
 	if err != nil {
 		return fmt.Errorf("encode probe: %w", err)
 	}
-	if err := sendIPv4To(beamURL, workspace, 0, b64); err != nil {
+	if err := sendIPv4WithChannels(beamURL, workspace, 0, b64, channels); err != nil {
 		return fmt.Errorf("send probe: %w", err)
 	}
 	return nil
 }
 
-func selectableShellTargets(discovered map[int64]discoveredTarget, requireSessionChannels bool) []discoveredTarget {
+func selectableShellTargets(discovered map[int64]discoveredTarget, requiredChannels []rpcpb.SessionChannel) []discoveredTarget {
 	compatible := make(map[int64]discoveredTarget)
 	for accountID, target := range discovered {
 		resp := target.response
 		requiredCapabilities := capabilityShell
-		if requireSessionChannels {
+		if len(requiredChannels) > 0 {
 			requiredCapabilities |= capabilitySessionChannels
 		}
-		if accountID > 0 && resp.GetProtocolVersion() == discoveryProtocolVersion && resp.GetCapabilities()&requiredCapabilities == requiredCapabilities {
+		if accountID > 0 && resp.GetProtocolVersion() == discoveryProtocolVersion &&
+			resp.GetCapabilities()&requiredCapabilities == requiredCapabilities &&
+			(len(requiredChannels) == 0 || sameSessionChannels(resp.GetChannels(), requiredChannels)) {
 			compatible[accountID] = target
 		}
 	}
