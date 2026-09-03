@@ -2,21 +2,26 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"math/rand/v2"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	rpcpb "somewear/rpc/proto"
 	"somewear/rpc/stream"
+
+	"google.golang.org/protobuf/proto"
 )
 
 const defaultMaxResponse = 200
@@ -41,6 +46,7 @@ func runServer(args []string) {
 		cwd:         cwd,
 		discoveries: make(map[discoveryKey]time.Time),
 		sessions:    newSessionRegistry(),
+		seenFiles:   make(map[string]bool),
 	}
 	s.streams = stream.NewEndpoint(func(peerAccountID int64, route stream.Route, constrained bool, frame *rpcpb.GridStreamFrame) error {
 		return sendGridStreamFrame(s.beamURL, s.workspaceID, peerAccountID, sessionRoute{id: route.SessionID, channels: route.Channels}, constrained, frame)
@@ -52,6 +58,8 @@ func runServer(args []string) {
 	fmt.Printf("RPC server listening on :%d\n", *port)
 	fmt.Printf("  Beam workspace: %d\n", workspaceID)
 	fmt.Printf("  Max response : %d bytes\n", *maxResponse)
+	go s.watchRepositoryNotifications()
+	go s.reconcileRepositoryFiles()
 
 	if err := http.ListenAndServe(fmt.Sprintf(":%d", *port), mux); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -73,6 +81,169 @@ type rpcServer struct {
 	sessions    *sessionRegistry
 	streams     *stream.Endpoint
 	idempotency idempotencyGuard
+	seenFilesMu sync.Mutex
+	seenFiles   map[string]bool
+}
+
+type repositoryFile struct {
+	FileID       string `json:"fileId"`
+	FileName     string `json:"fileName"`
+	MIMEType     string `json:"mimeType"`
+	SenderUserID string `json:"senderUserId"`
+	UploadedAt   string `json:"uploadedAt"`
+}
+
+type repositoryTransfer struct {
+	Status    string `json:"status"`
+	LocalPath string `json:"localPath"`
+}
+
+func (s *rpcServer) watchRepositoryNotifications() {
+	endpoint := strings.TrimRight(s.beamURL, "/") + "/api/file-repository/notifications"
+	for {
+		resp, err := http.Get(endpoint)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  File repository notification stream failed: %v\n", err)
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		if resp.StatusCode == http.StatusNoContent {
+			resp.Body.Close()
+			continue
+		}
+		if resp.StatusCode >= http.StatusMultipleChoices {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+			resp.Body.Close()
+			fmt.Fprintf(os.Stderr, "  File repository notification stream failed: HTTP %d: %s\n", resp.StatusCode, strings.TrimSpace(string(body)))
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		var file repositoryFile
+		err = json.NewDecoder(resp.Body).Decode(&file)
+		resp.Body.Close()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  File repository notification decode failed: %v\n", err)
+			continue
+		}
+		if err := s.handleRepositoryFile(file, 0); err != nil {
+			fmt.Fprintf(os.Stderr, "  File repository notification %s failed: %v\n", file.FileID, err)
+		}
+	}
+}
+
+func (s *rpcServer) reconcileRepositoryFiles() {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		for _, peer := range s.sessions.peers() {
+			if err := s.pollRepositoryPeer(peer); err != nil {
+				fmt.Fprintf(os.Stderr, "  File repository reconciliation for account %d failed: %v\n", peer, err)
+			}
+		}
+	}
+}
+
+func (s *rpcServer) pollRepositoryPeer(peerAccountID int64) error {
+	endpoint := fmt.Sprintf("%s/api/file-repository/files?targetUserId=%d", strings.TrimRight(s.beamURL, "/"), peerAccountID)
+	resp, err := http.Get(endpoint)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= http.StatusMultipleChoices {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var files []repositoryFile
+	if err := json.NewDecoder(resp.Body).Decode(&files); err != nil {
+		return err
+	}
+	for _, file := range files {
+		if err := s.handleRepositoryFile(file, peerAccountID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *rpcServer) handleRepositoryFile(file repositoryFile, expectedPeerAccountID int64) error {
+	peerAccountID, err := strconv.ParseInt(file.SenderUserID, 10, 64)
+	if err != nil || peerAccountID <= 0 || file.MIMEType != repositoryEnvelopeMIME {
+		return nil
+	}
+	if expectedPeerAccountID != 0 && peerAccountID != expectedPeerAccountID {
+		return nil
+	}
+	if !s.hasActivePeer(peerAccountID) || !s.claimFile(file.FileID) {
+		return nil
+	}
+
+	localPath, ready, err := s.downloadRepositoryFile(file.FileID)
+	if err != nil {
+		s.releaseFile(file.FileID)
+		return fmt.Errorf("download %s: %w", file.FileID, err)
+	}
+	if !ready {
+		s.releaseFile(file.FileID)
+		return nil
+	}
+	contents, err := os.ReadFile(localPath)
+	if err != nil {
+		s.releaseFile(file.FileID)
+		return fmt.Errorf("read %s: %w", file.FileID, err)
+	}
+	var env rpcpb.Envelope
+	if err := proto.Unmarshal(contents, &env); err != nil || env.GetNamespace() != EnvelopeNamespace {
+		fmt.Fprintf(os.Stderr, "  Ignoring invalid repository envelope %s\n", file.FileID)
+		return nil
+	}
+	sentAt, _ := time.Parse(time.RFC3339, file.UploadedAt)
+	fmt.Printf("[req %d] Received file-repository envelope %s\n", env.GetRequestId(), file.FileID)
+	s.handleRequest(&env, peerAccountID, sentAt, time.Now())
+	return nil
+}
+
+func (s *rpcServer) downloadRepositoryFile(fileID string) (string, bool, error) {
+	endpoint := strings.TrimRight(s.beamURL, "/") + "/api/file-repository/files/" + url.PathEscape(fileID) + "/download"
+	resp, err := http.Post(endpoint, "application/json", nil)
+	if err != nil {
+		return "", false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= http.StatusMultipleChoices {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return "", false, fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var transfer repositoryTransfer
+	if err := json.NewDecoder(resp.Body).Decode(&transfer); err != nil {
+		return "", false, err
+	}
+	return transfer.LocalPath, transfer.LocalPath != "", nil
+}
+
+func (s *rpcServer) hasActivePeer(peerAccountID int64) bool {
+	for _, peer := range s.sessions.peers() {
+		if peer == peerAccountID {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *rpcServer) claimFile(fileID string) bool {
+	s.seenFilesMu.Lock()
+	defer s.seenFilesMu.Unlock()
+	if s.seenFiles[fileID] {
+		return false
+	}
+	s.seenFiles[fileID] = true
+	return true
+}
+
+func (s *rpcServer) releaseFile(fileID string) {
+	s.seenFilesMu.Lock()
+	delete(s.seenFiles, fileID)
+	s.seenFilesMu.Unlock()
 }
 
 type discoveryKey struct {
@@ -365,8 +536,8 @@ func (s *rpcServer) handleConnect(reqID uint32, targetUserID int64, req *rpcpb.C
 			return
 		}
 		route = sessionRoute{id: req.GetSessionId(), channels: channels}
-		s.sessions.put(targetUserID, route)
 	}
+	s.sessions.put(targetUserID, route)
 	hostname, _ := os.Hostname()
 
 	var ips []string

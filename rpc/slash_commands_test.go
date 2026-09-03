@@ -16,11 +16,13 @@ func TestShellSlashCommandsAreHandledLocally(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	pingCalls := 0
 	uploadedPath := ""
+	directPath := ""
 	commands := shellSlashCommands{
-		stdout: &stdout,
-		stderr: &stderr,
-		ping:   func() { pingCalls++ },
-		put:    func(path string) { uploadedPath = path },
+		stdout:  &stdout,
+		stderr:  &stderr,
+		ping:    func() { pingCalls++ },
+		putRepo: func(path string) { uploadedPath = path },
+		putGrid: func(path string) { directPath = path },
 	}
 
 	if commands.handle("echo /ping") {
@@ -38,6 +40,13 @@ func TestShellSlashCommandsAreHandledLocally(t *testing.T) {
 	}
 	if !commands.handle("/put "+path) || uploadedPath != path {
 		t.Fatalf("/put path = %q", uploadedPath)
+	}
+	uploadedPath = ""
+	if !commands.handle("/put-repo "+path) || uploadedPath != path {
+		t.Fatalf("/put-repo path = %q", uploadedPath)
+	}
+	if !commands.handle("/put-grid "+path) || directPath != path {
+		t.Fatalf("/put-grid path = %q", directPath)
 	}
 	if !commands.handle("/unknown") || !strings.Contains(stderr.String(), "unknown Grid Remote Shell command") {
 		t.Fatalf("unknown command output = %q", stderr.String())

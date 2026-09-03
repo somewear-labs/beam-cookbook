@@ -37,7 +37,9 @@ type uploadState struct {
 	updatedAt   time.Time
 }
 
-func uploadFileRPC(
+type fileSender func(string, int, int64, string, []rpcpb.SessionChannel) error
+
+func uploadFileDirectRPC(
 	beamURL string,
 	workspace int,
 	targetUserID int64,
@@ -88,7 +90,10 @@ func uploadFileRPC(
 			Complete:   complete,
 		}
 
-		response, err := sendPutChunk(beamURL, workspace, targetUserID, route, request, timeout, nextID, pendingID, responses, send)
+		response, err := sendPutChunkDirect(
+			beamURL, workspace, targetUserID, route, request, timeout,
+			nextID, pendingID, responses, send,
+		)
 		if err != nil {
 			return "", err
 		}
@@ -106,7 +111,7 @@ func uploadFileRPC(
 	}
 }
 
-func sendPutChunk(
+func sendPutChunkDirect(
 	beamURL string,
 	workspace int,
 	targetUserID int64,
@@ -141,6 +146,121 @@ func sendPutChunk(
 	for {
 		select {
 		case inbound := <-responses:
+			if inbound.envelope.GetRequestId() != id || inbound.envelope.GetSessionId() != route.id {
+				continue
+			}
+			response := inbound.envelope.GetResponse()
+			if put := response.GetPut(); put != nil {
+				return put, nil
+			}
+			if rpcError := response.GetError(); rpcError != nil {
+				return nil, errors.New(rpcError.GetMessage())
+			}
+		case <-timer.C:
+			return nil, fmt.Errorf("upload chunk timed out after %s", timeout)
+		}
+	}
+}
+
+func uploadFileRPC(
+	beamURL string,
+	workspace int,
+	targetUserID int64,
+	route sessionRoute,
+	localPath string,
+	timeout time.Duration,
+	nextID, pendingID *atomic.Uint32,
+	responses <-chan inboundEnvelope,
+	send fileSender,
+) (string, error) {
+	contents, err := os.ReadFile(localPath)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(localPath)
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() {
+		return "", errors.New("path must name a regular file")
+	}
+	if info.Size() > rpcUploadMaxSize {
+		return "", fmt.Errorf("file exceeds %d-byte upload limit", rpcUploadMaxSize)
+	}
+	name := filepath.Base(localPath)
+	if !validUploadName(name) {
+		return "", errors.New("file name is invalid")
+	}
+
+	request := &rpcpb.PutRequest{
+		TransferId: fmt.Sprintf("%x-%x", time.Now().UnixNano(), randomRequestID()),
+		Name:       name,
+		Mode:       uint32(info.Mode().Perm()),
+		TotalSize:  uint64(info.Size()),
+		Data:       contents,
+		Complete:   true,
+	}
+	response, err := sendPutFile(beamURL, workspace, targetUserID, route, request, timeout, nextID, pendingID, responses, send)
+	if err != nil {
+		return "", err
+	}
+	if response.GetNextOffset() != uint64(info.Size()) {
+		return "", fmt.Errorf("target acknowledged offset %d, want %d", response.GetNextOffset(), info.Size())
+	}
+	if !response.GetComplete() || response.GetPath() == "" {
+		return "", errors.New("target did not complete the upload")
+	}
+	return response.GetPath(), nil
+}
+
+func sendPutFile(
+	beamURL string,
+	workspace int,
+	targetUserID int64,
+	route sessionRoute,
+	request *rpcpb.PutRequest,
+	timeout time.Duration,
+	nextID, pendingID *atomic.Uint32,
+	responses <-chan inboundEnvelope,
+	send fileSender,
+) (*rpcpb.PutResponse, error) {
+	id := nextID.Add(1)
+	pendingID.Store(id)
+	defer pendingID.Store(0)
+
+	envelope := &rpcpb.Envelope{
+		RequestId: id,
+		SessionId: route.id,
+		Payload: &rpcpb.Envelope_Request{Request: &rpcpb.RpcRequest{
+			Method: &rpcpb.RpcRequest_Put{Put: request},
+		}},
+	}
+	payload, err := marshalEnvelopeBytes(envelope)
+	if err != nil {
+		return nil, fmt.Errorf("encode upload: %w", err)
+	}
+	tempFile, err := os.CreateTemp("", "grid-put-*.rpc")
+	if err != nil {
+		return nil, fmt.Errorf("create upload envelope: %w", err)
+	}
+	tempPath := tempFile.Name()
+	defer os.Remove(tempPath)
+	if _, err := tempFile.Write(payload); err != nil {
+		tempFile.Close()
+		return nil, fmt.Errorf("write upload envelope: %w", err)
+	}
+	if err := tempFile.Close(); err != nil {
+		return nil, fmt.Errorf("close upload envelope: %w", err)
+	}
+	if err := send(beamURL, workspace, targetUserID, tempPath, route.channels); err != nil {
+		return nil, fmt.Errorf("send upload: %w", err)
+	}
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	for {
+		select {
+		case inbound := <-responses:
 			if inbound.envelope.GetRequestId() != id {
 				continue
 			}
@@ -155,7 +275,7 @@ func sendPutChunk(
 				return nil, errors.New(rpcError.GetMessage())
 			}
 		case <-timer.C:
-			return nil, fmt.Errorf("upload chunk timed out after %s", timeout)
+			return nil, fmt.Errorf("upload timed out after %s", timeout)
 		}
 	}
 }
@@ -193,8 +313,8 @@ func (s *rpcServer) applyPutChunk(sourceUserID int64, request *rpcpb.PutRequest)
 	if request.GetTotalSize() > rpcUploadMaxSize {
 		return nil, fmt.Errorf("file exceeds %d-byte upload limit", rpcUploadMaxSize)
 	}
-	if len(request.GetData()) > rpcUploadChunkSize {
-		return nil, fmt.Errorf("upload chunk exceeds %d bytes", rpcUploadChunkSize)
+	if len(request.GetData()) > rpcUploadMaxSize {
+		return nil, fmt.Errorf("upload data exceeds %d bytes", rpcUploadMaxSize)
 	}
 
 	s.uploadMu.Lock()

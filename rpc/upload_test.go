@@ -3,10 +3,119 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"google.golang.org/protobuf/proto"
 	rpcpb "somewear/rpc/proto"
 )
+
+func TestUploadFileRPCSendsOneRouterFile(t *testing.T) {
+	localPath := filepath.Join(t.TempDir(), "hello.txt")
+	if err := os.WriteFile(localPath, []byte("hello grid"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	var nextID, pendingID atomic.Uint32
+	responses := make(chan inboundEnvelope, 1)
+	route := sessionRoute{id: 17, channels: []rpcpb.SessionChannel{rpcpb.SessionChannel_RADIO}}
+	send := func(_ string, workspace int, targetUserID int64, path string, channels []rpcpb.SessionChannel) error {
+		if workspace != 7 || targetUserID != 42 || !sameSessionChannels(channels, route.channels) {
+			t.Fatalf("route = workspace %d, target %d, channels %v", workspace, targetUserID, channels)
+		}
+		wireBytes, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		var envelope rpcpb.Envelope
+		if err := proto.Unmarshal(wireBytes, &envelope); err != nil {
+			return err
+		}
+		put := envelope.GetRequest().GetPut()
+		if envelope.GetNamespace() != EnvelopeNamespace || envelope.GetSessionId() != route.id ||
+			put.GetName() != "hello.txt" || string(put.GetData()) != "hello grid" || !put.GetComplete() {
+			t.Fatalf("upload envelope = %+v", &envelope)
+		}
+		responses <- inboundEnvelope{envelope: &rpcpb.Envelope{
+			RequestId: envelope.GetRequestId(),
+			SessionId: route.id,
+			Payload: &rpcpb.Envelope_Response{Response: &rpcpb.RpcResponse{
+				Result: &rpcpb.RpcResponse_Put{Put: &rpcpb.PutResponse{
+					NextOffset: uint64(len("hello grid")),
+					Path:       "/remote/hello.txt",
+					Complete:   true,
+				}},
+			}},
+		}}
+		return nil
+	}
+
+	remotePath, err := uploadFileRPC(
+		"beam", 7, 42, route, localPath, time.Second,
+		&nextID, &pendingID, responses, send,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if remotePath != "/remote/hello.txt" || pendingID.Load() != 0 {
+		t.Fatalf("result = path %q, pending %d", remotePath, pendingID.Load())
+	}
+}
+
+func TestUploadFileDirectRPCSendsIPv4Chunks(t *testing.T) {
+	contents := make([]byte, rpcUploadChunkSize+7)
+	for i := range contents {
+		contents[i] = byte(i)
+	}
+	localPath := filepath.Join(t.TempDir(), "direct.bin")
+	if err := os.WriteFile(localPath, contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var nextID, pendingID atomic.Uint32
+	responses := make(chan inboundEnvelope, 2)
+	route := sessionRoute{id: 19, channels: []rpcpb.SessionChannel{rpcpb.SessionChannel_MESH}}
+	var offsets []uint64
+	send := func(_ string, workspace int, targetUserID int64, payload string, channels []rpcpb.SessionChannel) error {
+		if workspace != 7 || targetUserID != 42 || !sameSessionChannels(channels, route.channels) {
+			t.Fatalf("route = workspace %d, target %d, channels %v", workspace, targetUserID, channels)
+		}
+		envelope, err := unmarshalEnvelope(payload)
+		if err != nil {
+			return err
+		}
+		put := envelope.GetRequest().GetPut()
+		offsets = append(offsets, put.GetOffset())
+		nextOffset := put.GetOffset() + uint64(len(put.GetData()))
+		responses <- inboundEnvelope{envelope: &rpcpb.Envelope{
+			RequestId: envelope.GetRequestId(),
+			SessionId: route.id,
+			Payload: &rpcpb.Envelope_Response{Response: &rpcpb.RpcResponse{
+				Result: &rpcpb.RpcResponse_Put{Put: &rpcpb.PutResponse{
+					NextOffset: nextOffset,
+					Path:       "/remote/direct.bin",
+					Complete:   put.GetComplete(),
+				}},
+			}},
+		}}
+		return nil
+	}
+
+	remotePath, err := uploadFileDirectRPC(
+		"beam", 7, 42, route, localPath, time.Second,
+		&nextID, &pendingID, responses, send,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if remotePath != "/remote/direct.bin" || pendingID.Load() != 0 {
+		t.Fatalf("result = path %q, pending %d", remotePath, pendingID.Load())
+	}
+	if len(offsets) != 2 || offsets[0] != 0 || offsets[1] != rpcUploadChunkSize {
+		t.Fatalf("chunk offsets = %v", offsets)
+	}
+}
 
 func TestApplyPutChunkUploadsFileAndAcceptsRetry(t *testing.T) {
 	server := &rpcServer{uploadRoot: t.TempDir()}
@@ -71,15 +180,15 @@ func TestApplyPutChunkUploadsFileAndAcceptsRetry(t *testing.T) {
 	}
 }
 
-func TestApplyPutChunkRejectsTraversalAndOversizedChunks(t *testing.T) {
+func TestApplyPutChunkRejectsTraversalAndOversizedData(t *testing.T) {
 	server := &rpcServer{uploadRoot: t.TempDir()}
 	for name, request := range map[string]*rpcpb.PutRequest{
 		"traversal": {
 			TransferId: "transfer-1", Name: "../escape", Complete: true,
 		},
-		"oversized chunk": {
-			TransferId: "transfer-2", Name: "large", TotalSize: rpcUploadChunkSize + 1,
-			Data: make([]byte, rpcUploadChunkSize+1), Complete: true,
+		"oversized data": {
+			TransferId: "transfer-2", Name: "large", TotalSize: rpcUploadMaxSize + 1,
+			Data: make([]byte, rpcUploadMaxSize+1), Complete: true,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

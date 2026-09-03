@@ -23,7 +23,8 @@ const (
 	// EnvelopeNamespace is stamped on every outbound Envelope and checked on every
 	// inbound one. Any IPv4Datagram that doesn't carry this exact value is discarded
 	// before dispatch, preventing accidental execution of non-RPC packets.
-	EnvelopeNamespace = "swl.rpc.v1"
+	EnvelopeNamespace      = "swl.rpc.v1"
+	repositoryEnvelopeMIME = "application/vnd.somewear.grid-rpc"
 )
 
 func activeWorkspaceID(beamURL string) (int, error) {
@@ -56,12 +57,16 @@ func activeWorkspaceID(beamURL string) (int, error) {
 }
 
 func marshalEnvelope(env *rpcpb.Envelope) (string, error) {
-	env.Namespace = EnvelopeNamespace
-	b, err := proto.Marshal(env)
+	b, err := marshalEnvelopeBytes(env)
 	if err != nil {
 		return "", err
 	}
 	return base64.StdEncoding.EncodeToString(b), nil
+}
+
+func marshalEnvelopeBytes(env *rpcpb.Envelope) ([]byte, error) {
+	env.Namespace = EnvelopeNamespace
+	return proto.Marshal(env)
 }
 
 func unmarshalEnvelope(b64 string) (*rpcpb.Envelope, error) {
@@ -105,6 +110,27 @@ func sendIPv4WithChannels(beamURL string, workspaceID int, targetUserID int64, b
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	return nil
+}
+
+func sendFileWithChannels(beamURL string, workspaceID int, targetUserID int64, path string, channels []rpcpb.SessionChannel) error {
+	request := map[string]any{
+		"path":     path,
+		"mimeType": repositoryEnvelopeMIME,
+	}
+	if targetUserID != 0 {
+		request["targetUserId"] = targetUserID
+	}
+	body, _ := json.Marshal(request)
+	resp, err := http.Post(strings.TrimRight(beamURL, "/")+"/api/file-repository/upload", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= http.StatusMultipleChoices {
+		responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(responseBody)))
 	}
 	return nil
 }
