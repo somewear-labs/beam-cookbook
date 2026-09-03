@@ -47,9 +47,11 @@ func runShell(args []string) {
 	}
 
 	var nextID atomic.Uint32
+	nextID.Store(randomRequestID())
 	var pendingID atomic.Uint32
 	var expectedSource atomic.Int64
 	responses := make(chan inboundEnvelope, 64)
+	var responseIdempotency idempotencyGuard
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -58,7 +60,8 @@ func runShell(args []string) {
 		for _, inbound := range parseWebhookEnvelopes(body) {
 			env := inbound.envelope
 			if env.GetResponse() != nil && env.RequestId == pendingID.Load() &&
-				(expectedSource.Load() == 0 || inbound.sourceUserID == expectedSource.Load()) {
+				(expectedSource.Load() == 0 || inbound.sourceUserID == expectedSource.Load()) &&
+				responseIdempotency.acceptResponse(inbound.sourceUserID, env) {
 				responses <- inbound
 			}
 		}
