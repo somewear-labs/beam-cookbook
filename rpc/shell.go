@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -22,7 +23,23 @@ func runShell(args []string) {
 	discoveryTimeout := fs.Duration("discovery-timeout", 5*time.Second, "How long to collect discovery responses")
 	responseJitter := fs.Duration("response-jitter", 750*time.Millisecond, "Maximum discovery response jitter")
 	beamURL := fs.String("beam-url", defaultBeamURL, "Beam API URL for sending commands")
+	channelsValue := fs.String("channels", "", "Constrain session traffic: radio,satellite,cellular,mesh")
 	fs.Parse(args)
+	channelsSpecified := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "channels" {
+			channelsSpecified = true
+		}
+	})
+	route := sessionRoute{}
+	if channelsSpecified {
+		channels, err := parseSessionChannels(*channelsValue)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "shell: --channels:", err)
+			return
+		}
+		route = sessionRoute{id: randomSessionID(), channels: channels}
+	}
 	workspaceID, err := activeWorkspaceID(*beamURL)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "shell:", err)
@@ -77,7 +94,7 @@ func runShell(args []string) {
 		discovered := collectDiscoveryResponses(discoveryID, *discoveryTimeout, responses)
 		pendingID.Store(0)
 
-		selectable := selectableShellTargets(discovered)
+		selectable := selectableShellTargets(discovered, channelsSpecified)
 		if len(selectable) == 0 {
 			fmt.Println("No compatible Grid Remote Shell targets found.")
 			return
@@ -103,12 +120,17 @@ func runShell(args []string) {
 	fmt.Println("Ctrl-C or 'exit' to quit.")
 	fmt.Println()
 
-	doConnect(*beamURL, workspaceID, selectedUser, *timeout, &nextID, &pendingID, responses)
+	if !doConnect(*beamURL, workspaceID, selectedUser, route, *timeout, &nextID, &pendingID, responses) {
+		return
+	}
+	if route.id != 0 {
+		defer sendDisconnect(*beamURL, workspaceID, selectedUser, route)
+	}
 	slashCommands := shellSlashCommands{
 		stdout: os.Stdout,
 		stderr: os.Stderr,
 		ping: func() {
-			doPing(*beamURL, workspaceID, selectedUser, *timeout, &nextID, &pendingID, responses, os.Stdout, os.Stderr, sendIPv4To)
+			doPing(*beamURL, workspaceID, selectedUser, route, *timeout, &nextID, &pendingID, responses, os.Stdout, os.Stderr, sendIPv4WithChannels)
 		},
 	}
 
@@ -135,6 +157,7 @@ func runShell(args []string) {
 
 		env := &rpcpb.Envelope{
 			RequestId: id,
+			SessionId: route.id,
 			Payload: &rpcpb.Envelope_Request{
 				Request: &rpcpb.RpcRequest{
 					Method: &rpcpb.RpcRequest_Exec{
@@ -149,7 +172,7 @@ func runShell(args []string) {
 			fmt.Fprintln(os.Stderr, "[encode error]", err)
 			continue
 		}
-		if err := sendIPv4To(*beamURL, workspaceID, selectedUser, b64); err != nil {
+		if err := sendIPv4WithChannels(*beamURL, workspaceID, selectedUser, b64, route.channels); err != nil {
 			fmt.Fprintln(os.Stderr, "[send error]", err)
 			continue
 		}
@@ -204,11 +227,15 @@ func sendDiscoveryProbe(beamURL string, workspace int, responseJitter time.Durat
 	return nil
 }
 
-func selectableShellTargets(discovered map[int64]discoveredTarget) []discoveredTarget {
+func selectableShellTargets(discovered map[int64]discoveredTarget, requireSessionChannels bool) []discoveredTarget {
 	compatible := make(map[int64]discoveredTarget)
 	for accountID, target := range discovered {
 		resp := target.response
-		if accountID > 0 && resp.GetProtocolVersion() == discoveryProtocolVersion && resp.GetCapabilities()&capabilityShell != 0 {
+		requiredCapabilities := capabilityShell
+		if requireSessionChannels {
+			requiredCapabilities |= capabilitySessionChannels
+		}
+		if accountID > 0 && resp.GetProtocolVersion() == discoveryProtocolVersion && resp.GetCapabilities()&requiredCapabilities == requiredCapabilities {
 			compatible[accountID] = target
 		}
 	}
@@ -225,17 +252,18 @@ const (
 	colorBlue   = "\033[34m"
 )
 
-func doConnect(beamURL string, workspace int, targetUserID int64, timeout time.Duration, nextID, pendingID *atomic.Uint32, responses chan inboundEnvelope) {
+func doConnect(beamURL string, workspace int, targetUserID int64, route sessionRoute, timeout time.Duration, nextID, pendingID *atomic.Uint32, responses <-chan inboundEnvelope) bool {
 	id := nextID.Add(1)
 	pendingID.Store(id)
 	defer pendingID.Store(0)
 
 	env := &rpcpb.Envelope{
 		RequestId: id,
+		SessionId: route.id,
 		Payload: &rpcpb.Envelope_Request{
 			Request: &rpcpb.RpcRequest{
 				Method: &rpcpb.RpcRequest_Connect{
-					Connect: &rpcpb.ConnectRequest{},
+					Connect: &rpcpb.ConnectRequest{SessionId: route.id, Channels: route.channels},
 				},
 			},
 		},
@@ -243,23 +271,66 @@ func doConnect(beamURL string, workspace int, targetUserID int64, timeout time.D
 	b64, err := marshalEnvelope(env)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "[connect encode error]", err)
-		return
+		return false
 	}
 	if err := sendIPv4To(beamURL, workspace, targetUserID, b64); err != nil {
 		fmt.Fprintln(os.Stderr, "[connect send error]", err)
-		return
+		return false
 	}
 
 	fmt.Printf("%s%sconnecting...%s", colorDim, colorCyan, colorReset)
 
 	select {
-	case resp := <-responses:
+	case inbound := <-responses:
 		fmt.Print("\r\033[K") // clear the "connecting..." line
-		if c := resp.envelope.GetResponse().GetConnect(); c != nil {
+		if c := inbound.envelope.GetResponse().GetConnect(); c != nil {
+			accepted, err := validateConnectSession(route, c)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "[connect error]", err)
+				return false
+			}
 			printConnectBanner(c)
+			if len(accepted) > 0 {
+				fmt.Printf("  %schannels%s  %s\n\n", colorDim, colorReset, formatSessionChannels(accepted))
+			}
+			return true
+		}
+		if rpcError := inbound.envelope.GetResponse().GetError(); rpcError != nil {
+			fmt.Fprintln(os.Stderr, "[connect error]", rpcError.GetMessage())
 		}
 	case <-time.After(timeout):
 		fmt.Printf("\r\033[K%s[no response — is the server running?]%s\n\n", colorYellow, colorReset)
+	}
+	return false
+}
+
+func validateConnectSession(route sessionRoute, response *rpcpb.ConnectResponse) ([]rpcpb.SessionChannel, error) {
+	if route.id == 0 {
+		return nil, nil
+	}
+	accepted, err := validateSessionChannels(response.GetChannels())
+	if err != nil {
+		return nil, fmt.Errorf("target did not accept requested channels: %w", err)
+	}
+	if response.GetSessionId() != route.id {
+		return nil, errors.New("target returned a different session ID")
+	}
+	if !sameSessionChannels(route.channels, accepted) {
+		return nil, fmt.Errorf("target returned channels %s; requested %s", formatSessionChannels(accepted), formatSessionChannels(route.channels))
+	}
+	return accepted, nil
+}
+
+func sendDisconnect(beamURL string, workspace int, targetUserID int64, route sessionRoute) {
+	envelope := &rpcpb.Envelope{
+		SessionId: route.id,
+		Payload: &rpcpb.Envelope_Request{Request: &rpcpb.RpcRequest{
+			Method: &rpcpb.RpcRequest_Disconnect{Disconnect: &rpcpb.DisconnectRequest{}},
+		}},
+	}
+	payload, err := marshalEnvelope(envelope)
+	if err == nil {
+		_ = sendIPv4WithChannels(beamURL, workspace, targetUserID, payload, route.channels)
 	}
 }
 

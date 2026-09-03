@@ -9,10 +9,19 @@ option go_package = "somewear/rpc/proto;rpcpb";
 message Envelope {
   string namespace   = 1;
   uint32 request_id  = 2;
+  uint64 session_id  = 6;
   oneof payload {
     RpcRequest  request  = 3;
     RpcResponse response = 4;
   }
+}
+
+enum SessionChannel {
+  SESSION_CHANNEL_UNSPECIFIED = 0;
+  RADIO = 1;
+  SATELLITE = 2;
+  CELLULAR = 3;
+  MESH = 4;
 }
 
 // RpcRequest carries a single method call. Add new methods here as a new oneof field.
@@ -22,6 +31,7 @@ message RpcRequest {
     ConnectRequest   connect   = 2;
     DiscoverRequest  discover  = 3;
     PingRequest      ping      = 4;
+    DisconnectRequest disconnect = 6;
   }
 }
 
@@ -50,7 +60,10 @@ message ExecResponse {
 
 // --- Connect ---
 
-message ConnectRequest {}
+message ConnectRequest {
+  uint64 session_id = 1;
+  repeated SessionChannel channels = 2;
+}
 
 message ConnectResponse {
   string hostname = 1;
@@ -58,7 +71,11 @@ message ConnectResponse {
   string arch = 3;
   string cpu_model = 4;
   int32  cpu_count = 5;
+  uint64 session_id = 6;
+  repeated SessionChannel channels = 7;
 }
+
+message DisconnectRequest {}
 
 // --- Ping ---
 
