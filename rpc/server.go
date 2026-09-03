@@ -64,6 +64,7 @@ type rpcServer struct {
 	discoveryMu sync.Mutex
 	discoveries map[discoveryKey]time.Time
 	sessions    *sessionRegistry
+	idempotency idempotencyGuard
 }
 
 type discoveryKey struct {
@@ -84,6 +85,11 @@ func (s *rpcServer) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		env := inbound.envelope
 		switch env.Payload.(type) {
 		case *rpcpb.Envelope_Request:
+			if !s.idempotency.acceptRequest(inbound.sourceUserID, env) {
+				fmt.Printf("[req %d] Ignoring duplicate request from account %d (session %d)\n",
+					env.RequestId, inbound.sourceUserID, env.SessionId)
+				continue
+			}
 			s.handleRequest(env, inbound.sourceUserID, inbound.packageSentAt, inbound.receivedAt)
 		case *rpcpb.Envelope_Response:
 			fmt.Printf("[req %d] Received response (ignoring)\n", env.RequestId)
