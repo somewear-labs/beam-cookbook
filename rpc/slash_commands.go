@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -16,6 +17,7 @@ type shellSlashCommands struct {
 	stdout io.Writer
 	stderr io.Writer
 	ping   func()
+	put    func(string)
 }
 
 type packageSender func(string, int, int64, string, []rpcpb.SessionChannel) error
@@ -35,6 +37,7 @@ func (c shellSlashCommands) handle(command string) bool {
 		}
 		fmt.Fprintln(c.stdout, "Grid Remote Shell commands:")
 		fmt.Fprintln(c.stdout, "  /ping                Measure a Grid round trip to the selected target")
+		fmt.Fprintln(c.stdout, "  /put PATH            Upload a local file to the selected target")
 		fmt.Fprintln(c.stdout, "  /help                Show this help")
 		fmt.Fprintln(c.stdout, "  exit, quit           Close the shell")
 	case "/ping":
@@ -45,6 +48,25 @@ func (c shellSlashCommands) handle(command string) bool {
 		if c.ping != nil {
 			c.ping()
 		}
+	case "/put":
+		if arguments == "" {
+			fmt.Fprintln(c.stderr, "usage: /put PATH")
+			return true
+		}
+		info, err := os.Stat(arguments)
+		if err != nil {
+			fmt.Fprintf(c.stderr, "/put: %v\n", err)
+			return true
+		}
+		if !info.Mode().IsRegular() {
+			fmt.Fprintln(c.stderr, "/put: path must name a regular file")
+			return true
+		}
+		if c.put == nil {
+			fmt.Fprintln(c.stderr, "/put: upload service is unavailable")
+			return true
+		}
+		c.put(arguments)
 	default:
 		fmt.Fprintf(c.stderr, "unknown Grid Remote Shell command: %s (try /help)\n", name)
 	}

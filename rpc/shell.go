@@ -153,6 +153,14 @@ func runShell(args []string) {
 		ping: func() {
 			doPing(*beamURL, workspaceID, selectedUser, route, *timeout, &nextID, &pendingID, responses, os.Stdout, os.Stderr, sendIPv4WithChannels)
 		},
+		put: func(path string) {
+			remotePath, err := uploadFileRPC(*beamURL, workspaceID, selectedUser, route, path, *timeout, &nextID, &pendingID, responses, sendIPv4WithChannels)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "[file upload error]", err)
+				return
+			}
+			fmt.Printf("Uploaded %s -> %s\n", path, remotePath)
+		},
 	}
 
 	scanner := bufio.NewScanner(os.Stdin)

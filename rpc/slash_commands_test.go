@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -13,10 +15,12 @@ import (
 func TestShellSlashCommandsAreHandledLocally(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	pingCalls := 0
+	uploadedPath := ""
 	commands := shellSlashCommands{
 		stdout: &stdout,
 		stderr: &stderr,
 		ping:   func() { pingCalls++ },
+		put:    func(path string) { uploadedPath = path },
 	}
 
 	if commands.handle("echo /ping") {
@@ -25,11 +29,34 @@ func TestShellSlashCommandsAreHandledLocally(t *testing.T) {
 	if !commands.handle("/ping") || pingCalls != 1 {
 		t.Fatalf("/ping calls = %d", pingCalls)
 	}
-	if !commands.handle("/help") || !strings.Contains(stdout.String(), "/ping") {
+	if !commands.handle("/help") || !strings.Contains(stdout.String(), "/put PATH") {
 		t.Fatalf("/help output = %q", stdout.String())
+	}
+	path := filepath.Join(t.TempDir(), "payload")
+	if err := os.WriteFile(path, []byte("payload"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !commands.handle("/put "+path) || uploadedPath != path {
+		t.Fatalf("/put path = %q", uploadedPath)
 	}
 	if !commands.handle("/unknown") || !strings.Contains(stderr.String(), "unknown Grid Remote Shell command") {
 		t.Fatalf("unknown command output = %q", stderr.String())
+	}
+}
+
+func TestFileUploadSlashCommandRequiresUploadService(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "payload.bin")
+	if err := os.WriteFile(path, []byte("grid file"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	commands := shellSlashCommands{stdout: &stdout, stderr: &stderr}
+
+	if !commands.handle("/put " + path) {
+		t.Fatal("/put was not intercepted")
+	}
+	if got := stderr.String(); !strings.Contains(got, "upload service is unavailable") {
+		t.Fatalf("/put stderr = %q", got)
 	}
 }
 
