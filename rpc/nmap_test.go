@@ -84,7 +84,8 @@ func TestDiscoveryPayloadsStayWithinSatelliteBudget(t *testing.T) {
 
 func TestDiscoveryProbeUsesBeamDatagram(t *testing.T) {
 	var request struct {
-		Data string `json:"data"`
+		Data         string `json:"data"`
+		TargetUserID string `json:"targetUserId"`
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/datagrams" {
@@ -98,8 +99,15 @@ func TestDiscoveryProbeUsesBeamDatagram(t *testing.T) {
 	defer server.Close()
 
 	channels := []rpcpb.SessionChannel{rpcpb.SessionChannel_RADIO}
-	if err := sendDiscoveryProbe(server.URL, 0, 42, channels); err != nil {
+	id, err := sendDiscoveryProbe(server.URL, 0, 42, channels)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if id.SourceUserID != "42" || id.Sequence != 1 {
+		t.Fatalf("datagram ID = %+v", id)
+	}
+	if request.TargetUserID != "" {
+		t.Fatalf("broadcast target = %q", request.TargetUserID)
 	}
 	envelope, err := unmarshalEnvelope(request.Data)
 	if err != nil {

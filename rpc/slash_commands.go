@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	rpcpb "somewear/rpc/proto"
@@ -54,10 +53,8 @@ func doPing(
 	targetUserID int64,
 	route sessionRoute,
 	timeout time.Duration,
-	pendingID *atomic.Uint32,
-	responses <-chan inboundEnvelope,
 	stdout, stderr io.Writer,
-	send datagramSender,
+	request datagramRequester,
 ) bool {
 	startedAt := time.Now()
 	requestID := randomRequestID()
@@ -75,60 +72,46 @@ func doPing(
 		fmt.Fprintln(stderr, "[ping encode error]", err)
 		return false
 	}
-	requestDatagramID, err := send(beamURL, targetUserID, data)
+	inbound, err := request(beamURL, targetUserID, data, timeout)
 	if err != nil {
-		fmt.Fprintln(stderr, "[ping send error]", err)
+		fmt.Fprintln(stderr, "[ping error]", err)
 		return false
 	}
-	pendingID.Store(requestID)
-	defer pendingID.Store(0)
-
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-	for {
-		select {
-		case inbound := <-responses:
-			if inbound.envelope.GetRequestId() != requestID {
-				continue
-			}
-			if inbound.envelope.GetSessionId() != route.id {
-				continue
-			}
-			if inbound.inResponseTo == nil || *inbound.inResponseTo != requestDatagramID {
-				continue
-			}
-			response := inbound.envelope.GetResponse()
-			if ping := response.GetPing(); ping != nil {
-				receivedAt := inbound.receivedAt
-				if receivedAt.IsZero() {
-					receivedAt = time.Now()
-				}
-				clientSentAt := time.UnixMilli(startedAt.UnixMilli())
-				clientReceivedAt := time.UnixMilli(receivedAt.UnixMilli())
-				targetReceivedAt := time.UnixMilli(ping.GetTargetReceiveUnixMillis())
-				targetSentAt := time.UnixMilli(ping.GetTargetSendUnixMillis())
-				if ping.GetTargetReceiveUnixMillis() <= 0 || ping.GetTargetSendUnixMillis() <= 0 || targetSentAt.Before(targetReceivedAt) {
-					fmt.Fprintln(stderr, "[ping error] target returned invalid timestamps")
-					return false
-				}
-				timings := calculateGridPingTimings(clientSentAt, targetReceivedAt, targetSentAt, clientReceivedAt)
-
-				fmt.Fprintf(stdout, "Grid ping account %d\n", targetUserID)
-				fmt.Fprintf(stdout, "  client → target  wall %s · computed %s\n", formatPingDuration(timings.clientToTargetWall), formatPingDuration(timings.clientToTargetComputed))
-				fmt.Fprintf(stdout, "  target → client  wall %s · computed %s\n", formatPingDuration(timings.targetToClientWall), formatPingDuration(timings.targetToClientComputed))
-				fmt.Fprintf(stdout, "  round trip       wall %s · computed %s\n", formatPingDuration(timings.roundTripWall), formatPingDuration(timings.roundTripComputed))
-				fmt.Fprintf(stdout, "  clock offset     %s (%s)\n", formatSignedPingDuration(timings.clockOffset), clockOffsetDirection(timings.clockOffset))
-				return true
-			}
-			if rpcError := response.GetError(); rpcError != nil {
-				fmt.Fprintln(stderr, "[ping error]", rpcError.GetMessage())
-				return false
-			}
-		case <-timer.C:
-			fmt.Fprintf(stderr, "[ping timeout after %s]\n", timeout)
-			return false
-		}
+	responseEnvelope, err := unmarshalEnvelope(inbound.Data)
+	if err != nil {
+		fmt.Fprintln(stderr, "[ping decode error]", err)
+		return false
 	}
+	if responseEnvelope.GetRequestId() != requestID || responseEnvelope.GetSessionId() != route.id {
+		fmt.Fprintln(stderr, "[ping error] response did not match request")
+		return false
+	}
+	response := responseEnvelope.GetResponse()
+	if rpcError := response.GetError(); rpcError != nil {
+		fmt.Fprintln(stderr, "[ping error]", rpcError.GetMessage())
+		return false
+	}
+	ping := response.GetPing()
+	if ping == nil {
+		fmt.Fprintln(stderr, "[ping error] target returned an unexpected response")
+		return false
+	}
+	clientSentAt := time.UnixMilli(startedAt.UnixMilli())
+	clientReceivedAt := time.Now()
+	targetReceivedAt := time.UnixMilli(ping.GetTargetReceiveUnixMillis())
+	targetSentAt := time.UnixMilli(ping.GetTargetSendUnixMillis())
+	if ping.GetTargetReceiveUnixMillis() <= 0 || ping.GetTargetSendUnixMillis() <= 0 || targetSentAt.Before(targetReceivedAt) {
+		fmt.Fprintln(stderr, "[ping error] target returned invalid timestamps")
+		return false
+	}
+	timings := calculateGridPingTimings(clientSentAt, targetReceivedAt, targetSentAt, clientReceivedAt)
+
+	fmt.Fprintf(stdout, "Grid ping account %d\n", targetUserID)
+	fmt.Fprintf(stdout, "  client → target  wall %s · computed %s\n", formatPingDuration(timings.clientToTargetWall), formatPingDuration(timings.clientToTargetComputed))
+	fmt.Fprintf(stdout, "  target → client  wall %s · computed %s\n", formatPingDuration(timings.targetToClientWall), formatPingDuration(timings.targetToClientComputed))
+	fmt.Fprintf(stdout, "  round trip       wall %s · computed %s\n", formatPingDuration(timings.roundTripWall), formatPingDuration(timings.roundTripComputed))
+	fmt.Fprintf(stdout, "  clock offset     %s (%s)\n", formatSignedPingDuration(timings.clockOffset), clockOffsetDirection(timings.clockOffset))
+	return true
 }
 
 type gridPingTimings struct {

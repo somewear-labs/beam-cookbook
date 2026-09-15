@@ -14,7 +14,7 @@ Applications send their serialized payload to Beam in a JSON API request:
 {"targetUserId":"384899","data":"<base64 protobuf>"}
 ```
 
-Beam sends the opaque application bytes through `/api/datagrams`. The receiving Beam exposes those bytes and their `datagramId` in a `GridDatagram` webhook event. The application responds through the same endpoint with that ID as `inResponseTo`; Beam derives the return address.
+The client helpers build four patterns on Beam's generic API. `Request` sends a direct datagram and waits for the first correlated response. `Broadcast` sends without a target, and `Responses` collects correlated replies. `Respond` sends a datagram whose `inResponseTo` identifies the request; Beam derives the return address from that ID. All sends use `/api/datagrams`, and response collection uses `/api/datagrams/responses`.
 
 Ping and discovery use this API. Connect and exec still use the cookbook's legacy protobuf envelope over IPv4Datagram while the experiment migrates incrementally.
 
@@ -150,6 +150,6 @@ Requires Go 1.22+ and (for `make proto`) `protoc` with `protoc-gen-go`.
 1. Add request and response messages to `proto/rpc.proto`.
 2. Add the corresponding fields to `RpcRequest.method` and `RpcResponse.result`.
 3. Run `make proto` to regenerate the Go bindings.
-4. Send the encoded envelope through `sendBeamDatagram` and reply through `respondWithBeamDatagram`.
+4. Send the encoded envelope through `requestBeamDatagram` and reply through `respondWithBeamDatagram`.
 
 Beam remains independent of this application proto.

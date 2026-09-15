@@ -87,15 +87,18 @@ func runShell(args []string) {
 		}
 
 		discoveryID := randomRequestID()
-		err := sendDiscoveryProbe(*beamURL, *responseJitter, discoveryID, route.channels)
+		requestDatagramID, err := sendDiscoveryProbe(*beamURL, *responseJitter, discoveryID, route.channels)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "shell: discovery failed:", err)
 			return
 		}
-		pendingID.Store(discoveryID)
 		fmt.Printf("Discovering targets for %s...\n", discoveryTimeout.String())
-		discovered := collectDiscoveryResponses(discoveryID, *discoveryTimeout, responses)
-		pendingID.Store(0)
+		discoveryResponses, err := responsesForBeamDatagram(*beamURL, requestDatagramID, *discoveryTimeout, 0)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "shell: discovery failed:", err)
+			return
+		}
+		discovered := collectDiscoveryResponses(discoveryID, discoveryResponses)
 
 		selectable := selectableShellTargets(discovered, route.channels)
 		if len(selectable) == 0 {
@@ -133,7 +136,7 @@ func runShell(args []string) {
 		stdout: os.Stdout,
 		stderr: os.Stderr,
 		ping: func() {
-			doPing(*beamURL, selectedUser, route, *timeout, &pendingID, responses, os.Stdout, os.Stderr, sendBeamDatagram)
+			doPing(*beamURL, selectedUser, route, *timeout, os.Stdout, os.Stderr, requestBeamDatagram)
 		},
 	}
 
@@ -211,7 +214,7 @@ func runShell(args []string) {
 	}
 }
 
-func sendDiscoveryProbe(beamURL string, responseJitter time.Duration, requestID uint32, channels []rpcpb.SessionChannel) error {
+func sendDiscoveryProbe(beamURL string, responseJitter time.Duration, requestID uint32, channels []rpcpb.SessionChannel) (beamDatagramID, error) {
 	envelope := &rpcpb.Envelope{
 		RequestId: requestID,
 		Payload: &rpcpb.Envelope_Request{Request: &rpcpb.RpcRequest{
@@ -223,13 +226,13 @@ func sendDiscoveryProbe(beamURL string, responseJitter time.Duration, requestID 
 	}
 	data, err := marshalEnvelope(envelope)
 	if err != nil {
-		return fmt.Errorf("encode probe: %w", err)
+		return beamDatagramID{}, fmt.Errorf("encode probe: %w", err)
 	}
-	_, err = sendBeamDatagram(beamURL, 0, data)
+	id, err := broadcastBeamDatagram(beamURL, data)
 	if err != nil {
-		return fmt.Errorf("send probe: %w", err)
+		return beamDatagramID{}, fmt.Errorf("send probe: %w", err)
 	}
-	return nil
+	return id, nil
 }
 
 func selectableShellTargets(discovered map[int64]discoveredTarget, requiredChannels []rpcpb.SessionChannel) []discoveredTarget {
