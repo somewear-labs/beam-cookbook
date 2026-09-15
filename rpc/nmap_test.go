@@ -96,8 +96,12 @@ func TestDiscoveryProbeUsesBeamDatagram(t *testing.T) {
 	}))
 	defer server.Close()
 
-	if err := sendDiscoveryProbe(server.URL, 0, 42); err != nil {
+	id, err := sendDiscoveryProbe(server.URL, 0, 42)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if id.SourceUserID != "42" || id.Sequence != 1 {
+		t.Fatalf("datagram ID = %+v", id)
 	}
 	if request.TargetUserID != "" {
 		t.Fatalf("targetUserId = %q, want broadcast", request.TargetUserID)

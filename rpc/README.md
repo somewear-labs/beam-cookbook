@@ -1,6 +1,6 @@
 # rpc — Remote Shell over GridDatagram
 
-Execute commands on a remote machine over any Somewear link. The cookbook owns its protobuf application protocol. Beam carries the encoded bytes without depending on that protocol.
+Execute commands on a remote machine over any Somewear link. The cookbook owns its protobuf application protocol. Beam carries the encoded bytes in GridDatagrams without depending on the cookbook proto.
 
 ## Architecture
 
@@ -8,19 +8,19 @@ Execute commands on a remote machine over any Somewear link. The cookbook owns i
 
 ## Layers
 
-Applications send their serialized payload to Beam through its JSON API:
+Applications send their serialized payload to Beam in a JSON API request:
 
 ```json
 {"targetUserId":"384899","data":"<base64 protobuf>"}
 ```
 
-Beam sends the opaque application bytes through `/api/datagrams`. The receiving Beam exposes the bytes and their `datagramId` in a `GridDatagram` webhook event. The application replies through the same endpoint with that ID as `inResponseTo`; Beam derives the return address.
+The client helpers build four patterns on Beam's generic API. `Request` sends a direct datagram and waits for the first correlated response. `Broadcast` sends without a target, and `Responses` collects correlated replies. `Respond` sends a datagram whose `inResponseTo` identifies the request; Beam derives the return address from that ID. All sends use `/api/datagrams`, and response collection uses `/api/datagrams/responses`.
 
-Ping and discovery use GridDatagram. Connect and exec remain on the legacy IPv4Datagram path during the incremental migration. See [`proto/rpc.proto`](./proto/rpc.proto) for the application schema.
+Ping and discovery use this API. Connect and exec still use the cookbook's legacy protobuf envelope over IPv4Datagram while the experiment migrates incrementally.
 
 ## Network setup
 
-Both machines must be signed in to Beam and joined to the same Somewear workspace. Beam uses the active workspace as routing context. A datagram with `targetUserId` is direct to that user; a datagram without it is broadcast within the workspace.
+Both machines must be signed in to Beam and joined to the same Somewear workspace. Beam uses the active workspace as routing context. A command with `targetUserId` is direct to that user; a command without it is broadcast within the workspace.
 
 ### 1. Find and activate the workspace on each machine
 
@@ -34,11 +34,13 @@ beam workspace activate --name "My Workspace"
 beam workspace activate --id 39054
 ```
 
-Grid Remote Shell reads the active workspace from Beam.
+Grid Remote Shell reads the active workspace from each local Beam instance. To
+change networks, activate the workspace in Beam; Grid Remote Shell does not
+provide a separate workspace override.
 
 ### 2. Configure Beam webhook on the remote machine
 
-Beam must forward inbound IPv4Datagrams to `rpc server` via webhook. Choose any free port (e.g. 8081):
+Beam must forward inbound RPC events to `rpc server` via webhook. Choose any free port (e.g. 8081):
 
 ```bash
 beam config set webhook-address http://localhost:8081
@@ -140,7 +142,7 @@ Requires Go 1.22+ and (for `make proto`) `protoc` with `protoc-gen-go`.
 
 1. Add request and response messages to `proto/rpc.proto`.
 2. Add the corresponding fields to `RpcRequest.method` and `RpcResponse.result`.
-3. Run `make proto` to regenerate Go bindings.
-4. Send the encoded envelope through `sendBeamDatagram` and reply through `respondWithBeamDatagram`.
+3. Run `make proto` to regenerate the Go bindings.
+4. Send the encoded envelope through `requestBeamDatagram` and reply through `respondWithBeamDatagram`.
 
-Beam remains independent of the application proto.
+Beam remains independent of this application proto.
