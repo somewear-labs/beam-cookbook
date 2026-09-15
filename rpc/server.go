@@ -39,6 +39,7 @@ func runServer(args []string) {
 		beamURL:     *beamURL,
 		cwd:         cwd,
 		discoveries: make(map[discoveryKey]time.Time),
+		sessions:    newSessionRegistry(),
 	}
 
 	mux := http.NewServeMux()
@@ -62,6 +63,7 @@ type rpcServer struct {
 	cwdMu       sync.Mutex
 	discoveryMu sync.Mutex
 	discoveries map[discoveryKey]time.Time
+	sessions    *sessionRegistry
 }
 
 type discoveryKey struct {
@@ -95,21 +97,42 @@ func (s *rpcServer) handleRequest(env *rpcpb.Envelope, sourceUserID int64, packa
 	req := env.GetRequest()
 	switch req.Method.(type) {
 	case *rpcpb.RpcRequest_Exec:
-		s.handleExec(env.RequestId, sourceUserID, req.GetExec())
+		route, ok := s.routeForSession(sourceUserID, env.GetSessionId())
+		if !ok {
+			s.sendError(env.RequestId, sourceUserID, sessionRoute{id: env.GetSessionId()}, "unknown or expired shell session")
+			return
+		}
+		s.handleExec(env.RequestId, sourceUserID, route, req.GetExec())
 	case *rpcpb.RpcRequest_Connect:
-		s.handleConnect(env.RequestId, sourceUserID)
+		s.handleConnect(env.RequestId, sourceUserID, req.GetConnect())
 	case *rpcpb.RpcRequest_Discover:
 		if s.acceptDiscovery(sourceUserID, env.RequestId) {
 			go s.handleDiscover(env.RequestId, sourceUserID, req.GetDiscover())
 		}
 	case *rpcpb.RpcRequest_Ping:
-		s.handlePing(env.RequestId, sourceUserID, packageSentAt, receivedAt)
+		route, ok := s.routeForSession(sourceUserID, env.GetSessionId())
+		if !ok {
+			s.sendError(env.RequestId, sourceUserID, sessionRoute{id: env.GetSessionId()}, "unknown or expired shell session")
+			return
+		}
+		s.handlePing(env.RequestId, sourceUserID, route, packageSentAt, receivedAt)
+	case *rpcpb.RpcRequest_Disconnect:
+		if env.GetSessionId() != 0 {
+			s.sessions.remove(sourceUserID, env.GetSessionId())
+		}
 	default:
-		s.sendError(env.RequestId, sourceUserID, fmt.Sprintf("unknown method: %T", req.Method))
+		s.sendError(env.RequestId, sourceUserID, sessionRoute{id: env.GetSessionId()}, fmt.Sprintf("unknown method: %T", req.Method))
 	}
 }
 
-func (s *rpcServer) handlePing(reqID uint32, targetUserID int64, packageSentAt, receivedAt time.Time) {
+func (s *rpcServer) routeForSession(peerAccountID int64, sessionID uint64) (sessionRoute, bool) {
+	if sessionID == 0 {
+		return sessionRoute{}, true
+	}
+	return s.sessions.get(peerAccountID, sessionID)
+}
+
+func (s *rpcServer) handlePing(reqID uint32, targetUserID int64, route sessionRoute, packageSentAt, receivedAt time.Time) {
 	if receivedAt.IsZero() {
 		receivedAt = time.Now()
 	}
@@ -119,21 +142,24 @@ func (s *rpcServer) handlePing(reqID uint32, targetUserID int64, packageSentAt, 
 	}
 	resp := &rpcpb.Envelope{
 		RequestId: reqID,
-		Payload: &rpcpb.Envelope_Response{Response: &rpcpb.RpcResponse{
-			Result: &rpcpb.RpcResponse_Ping{Ping: &rpcpb.PingResponse{
-				TargetReceiveUnixMillis:      receivedAt.UnixMilli(),
-				TargetSendUnixMillis:         time.Now().UnixMilli(),
-				ClientPackageSendUnixSeconds: packageSendUnixSeconds,
-				ClientAccountId:              targetUserID,
-			}},
-		}},
+		SessionId: route.id,
+		Payload: &rpcpb.Envelope_Response{
+			Response: &rpcpb.RpcResponse{
+				Result: &rpcpb.RpcResponse_Ping{Ping: &rpcpb.PingResponse{
+					TargetReceiveUnixMillis:      receivedAt.UnixMilli(),
+					TargetSendUnixMillis:         time.Now().UnixMilli(),
+					ClientPackageSendUnixSeconds: packageSendUnixSeconds,
+					ClientAccountId:              targetUserID,
+				}},
+			},
+		},
 	}
 	b64, err := marshalEnvelope(resp)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "  Failed to marshal ping response:", err)
 		return
 	}
-	if err := sendIPv4To(s.beamURL, s.workspaceID, targetUserID, b64); err != nil {
+	if err := sendIPv4WithChannels(s.beamURL, s.workspaceID, targetUserID, b64, route.channels); err != nil {
 		fmt.Fprintln(os.Stderr, "  Failed to send ping response:", err)
 	}
 }
@@ -174,7 +200,7 @@ func (s *rpcServer) handleDiscover(reqID uint32, targetUserID int64, req *rpcpb.
 				ProtocolVersion: discoveryProtocolVersion,
 				Hostname:        truncateRunes(hostname, maxDiscoveryHostnameRunes),
 				Arch:            truncateRunes(arch, maxDiscoveryArchRunes),
-				Capabilities:    capabilityShell,
+				Capabilities:    capabilityShell | capabilitySessionChannels,
 			}},
 		}},
 	}
@@ -190,7 +216,7 @@ func (s *rpcServer) handleDiscover(reqID uint32, targetUserID int64, req *rpcpb.
 	fmt.Printf("[req %d] Discovery response sent to account %d\n", reqID, targetUserID)
 }
 
-func (s *rpcServer) handleExec(reqID uint32, targetUserID int64, req *rpcpb.ExecRequest) {
+func (s *rpcServer) handleExec(reqID uint32, targetUserID int64, route sessionRoute, req *rpcpb.ExecRequest) {
 	s.cwdMu.Lock()
 	cwd := s.cwd
 	s.cwdMu.Unlock()
@@ -240,6 +266,7 @@ func (s *rpcServer) handleExec(reqID uint32, targetUserID int64, req *rpcpb.Exec
 
 	resp := &rpcpb.Envelope{
 		RequestId: reqID,
+		SessionId: route.id,
 		Payload: &rpcpb.Envelope_Response{
 			Response: &rpcpb.RpcResponse{
 				Result: &rpcpb.RpcResponse_Exec{
@@ -258,7 +285,7 @@ func (s *rpcServer) handleExec(reqID uint32, targetUserID int64, req *rpcpb.Exec
 		fmt.Fprintln(os.Stderr, "  Failed to marshal response:", err)
 		return
 	}
-	if err := sendIPv4To(s.beamURL, s.workspaceID, targetUserID, b64); err != nil {
+	if err := sendIPv4WithChannels(s.beamURL, s.workspaceID, targetUserID, b64, route.channels); err != nil {
 		fmt.Fprintln(os.Stderr, "  Failed to send response:", err)
 		return
 	}
@@ -278,7 +305,21 @@ func truncateResponse(out []byte, maxBytes int) ([]byte, bool) {
 	return bytes.ToValidUTF8(out, nil), truncated
 }
 
-func (s *rpcServer) handleConnect(reqID uint32, targetUserID int64) {
+func (s *rpcServer) handleConnect(reqID uint32, targetUserID int64, req *rpcpb.ConnectRequest) {
+	route := sessionRoute{}
+	if req.GetSessionId() != 0 || len(req.GetChannels()) > 0 {
+		if req.GetSessionId() == 0 {
+			s.sendError(reqID, targetUserID, route, "channel-constrained session requires a session ID")
+			return
+		}
+		channels, err := validateSessionChannels(req.GetChannels())
+		if err != nil {
+			s.sendError(reqID, targetUserID, route, err.Error())
+			return
+		}
+		route = sessionRoute{id: req.GetSessionId(), channels: channels}
+		s.sessions.put(targetUserID, route)
+	}
 	hostname, _ := os.Hostname()
 
 	var ips []string
@@ -310,6 +351,7 @@ func (s *rpcServer) handleConnect(reqID uint32, targetUserID int64) {
 
 	resp := &rpcpb.Envelope{
 		RequestId: reqID,
+		SessionId: route.id,
 		Payload: &rpcpb.Envelope_Response{
 			Response: &rpcpb.RpcResponse{
 				Result: &rpcpb.RpcResponse_Connect{
@@ -319,6 +361,8 @@ func (s *rpcServer) handleConnect(reqID uint32, targetUserID int64) {
 						Arch:        arch,
 						CpuModel:    cpuModel,
 						CpuCount:    cpuCount,
+						SessionId:   route.id,
+						Channels:    route.channels,
 					},
 				},
 			},
@@ -369,9 +413,10 @@ func collectCPUInfo() (arch, model string) {
 	return arch, ""
 }
 
-func (s *rpcServer) sendError(reqID uint32, targetUserID int64, message string) {
+func (s *rpcServer) sendError(reqID uint32, targetUserID int64, route sessionRoute, message string) {
 	resp := &rpcpb.Envelope{
 		RequestId: reqID,
+		SessionId: route.id,
 		Payload: &rpcpb.Envelope_Response{
 			Response: &rpcpb.RpcResponse{
 				Result: &rpcpb.RpcResponse_Error{
@@ -384,5 +429,5 @@ func (s *rpcServer) sendError(reqID uint32, targetUserID int64, message string) 
 	if err != nil {
 		return
 	}
-	sendIPv4To(s.beamURL, s.workspaceID, targetUserID, b64)
+	sendIPv4WithChannels(s.beamURL, s.workspaceID, targetUserID, b64, route.channels)
 }

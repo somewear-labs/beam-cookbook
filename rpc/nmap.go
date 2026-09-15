@@ -20,6 +20,7 @@ import (
 const (
 	discoveryProtocolVersion  uint32 = 1
 	capabilityShell           uint32 = 1 << 0
+	capabilitySessionChannels uint32 = 1 << 1
 	maxDiscoveryJitter               = 2 * time.Second
 	maxDiscoveryHostnameRunes        = 32
 	maxDiscoveryArchRunes            = 16
@@ -165,6 +166,10 @@ func formatCapabilities(capabilities uint32) string {
 	if capabilities&capabilityShell != 0 {
 		names = append(names, "shell")
 		capabilities &^= capabilityShell
+	}
+	if capabilities&capabilitySessionChannels != 0 {
+		names = append(names, "session-channels")
+		capabilities &^= capabilitySessionChannels
 	}
 	if capabilities != 0 {
 		names = append(names, fmt.Sprintf("0x%x", capabilities))
