@@ -82,7 +82,7 @@ func (s *rpcServer) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		env := inbound.envelope
 		switch env.Payload.(type) {
 		case *rpcpb.Envelope_Request:
-			s.handleRequest(env, inbound.sourceUserID, inbound.packageSentAt, inbound.receivedAt)
+			s.handleRequest(env, inbound.sourceUserID, inbound.receivedAt, inbound.datagramID)
 		case *rpcpb.Envelope_Response:
 			fmt.Printf("[req %d] Received response (ignoring)\n", env.RequestId)
 		default:
@@ -91,7 +91,7 @@ func (s *rpcServer) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *rpcServer) handleRequest(env *rpcpb.Envelope, sourceUserID int64, packageSentAt, receivedAt time.Time) {
+func (s *rpcServer) handleRequest(env *rpcpb.Envelope, sourceUserID int64, receivedAt time.Time, requestDatagramID *beamDatagramID) {
 	req := env.GetRequest()
 	switch req.Method.(type) {
 	case *rpcpb.RpcRequest_Exec:
@@ -100,31 +100,25 @@ func (s *rpcServer) handleRequest(env *rpcpb.Envelope, sourceUserID int64, packa
 		s.handleConnect(env.RequestId, sourceUserID)
 	case *rpcpb.RpcRequest_Discover:
 		if s.acceptDiscovery(sourceUserID, env.RequestId) {
-			go s.handleDiscover(env.RequestId, sourceUserID, req.GetDiscover())
+			go s.handleDiscover(env.RequestId, sourceUserID, req.GetDiscover(), requestDatagramID)
 		}
 	case *rpcpb.RpcRequest_Ping:
-		s.handlePing(env.RequestId, sourceUserID, packageSentAt, receivedAt)
+		s.handlePing(env.RequestId, sourceUserID, receivedAt, requestDatagramID)
 	default:
 		s.sendError(env.RequestId, sourceUserID, fmt.Sprintf("unknown method: %T", req.Method))
 	}
 }
 
-func (s *rpcServer) handlePing(reqID uint32, targetUserID int64, packageSentAt, receivedAt time.Time) {
+func (s *rpcServer) handlePing(reqID uint32, targetUserID int64, receivedAt time.Time, requestDatagramID *beamDatagramID) {
 	if receivedAt.IsZero() {
 		receivedAt = time.Now()
-	}
-	var packageSendUnixSeconds int64
-	if !packageSentAt.IsZero() {
-		packageSendUnixSeconds = packageSentAt.Unix()
 	}
 	resp := &rpcpb.Envelope{
 		RequestId: reqID,
 		Payload: &rpcpb.Envelope_Response{Response: &rpcpb.RpcResponse{
 			Result: &rpcpb.RpcResponse_Ping{Ping: &rpcpb.PingResponse{
-				TargetReceiveUnixMillis:      receivedAt.UnixMilli(),
-				TargetSendUnixMillis:         time.Now().UnixMilli(),
-				ClientPackageSendUnixSeconds: packageSendUnixSeconds,
-				ClientAccountId:              targetUserID,
+				TargetReceiveUnixMillis: receivedAt.UnixMilli(),
+				TargetSendUnixMillis:    time.Now().UnixMilli(),
 			}},
 		}},
 	}
@@ -133,7 +127,7 @@ func (s *rpcServer) handlePing(reqID uint32, targetUserID int64, packageSentAt, 
 		fmt.Fprintln(os.Stderr, "  Failed to marshal ping response:", err)
 		return
 	}
-	if err := sendIPv4To(s.beamURL, s.workspaceID, targetUserID, b64); err != nil {
+	if err := s.sendResponse(requestDatagramID, targetUserID, b64); err != nil {
 		fmt.Fprintln(os.Stderr, "  Failed to send ping response:", err)
 	}
 }
@@ -156,7 +150,7 @@ func (s *rpcServer) acceptDiscovery(sourceUserID int64, requestID uint32) bool {
 	return true
 }
 
-func (s *rpcServer) handleDiscover(reqID uint32, targetUserID int64, req *rpcpb.DiscoverRequest) {
+func (s *rpcServer) handleDiscover(reqID uint32, targetUserID int64, req *rpcpb.DiscoverRequest, requestDatagramID *beamDatagramID) {
 	jitter := time.Duration(req.GetResponseJitterMs()) * time.Millisecond
 	if jitter > maxDiscoveryJitter {
 		jitter = maxDiscoveryJitter
@@ -183,11 +177,18 @@ func (s *rpcServer) handleDiscover(reqID uint32, targetUserID int64, req *rpcpb.
 		fmt.Fprintln(os.Stderr, "  Failed to marshal discovery response:", err)
 		return
 	}
-	if err := sendIPv4To(s.beamURL, s.workspaceID, targetUserID, b64); err != nil {
+	if err := s.sendResponse(requestDatagramID, targetUserID, b64); err != nil {
 		fmt.Fprintln(os.Stderr, "  Failed to send discovery response:", err)
 		return
 	}
 	fmt.Printf("[req %d] Discovery response sent to account %d\n", reqID, targetUserID)
+}
+
+func (s *rpcServer) sendResponse(requestDatagramID *beamDatagramID, targetUserID int64, data string) error {
+	if requestDatagramID != nil {
+		return respondWithBeamDatagram(s.beamURL, *requestDatagramID, data)
+	}
+	return sendIPv4To(s.beamURL, s.workspaceID, targetUserID, data)
 }
 
 func (s *rpcServer) handleExec(reqID uint32, targetUserID int64, req *rpcpb.ExecRequest) {

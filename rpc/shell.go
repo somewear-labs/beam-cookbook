@@ -67,12 +67,11 @@ func runShell(args []string) {
 		}
 
 		discoveryID := randomRequestID()
-		pendingID.Store(discoveryID)
-		if err := sendDiscoveryProbe(*beamURL, workspaceID, *responseJitter, discoveryID); err != nil {
-			pendingID.Store(0)
+		if err := sendDiscoveryProbe(*beamURL, *responseJitter, discoveryID); err != nil {
 			fmt.Fprintln(os.Stderr, "shell: discovery failed:", err)
 			return
 		}
+		pendingID.Store(discoveryID)
 		fmt.Printf("Discovering targets for %s...\n", discoveryTimeout.String())
 		discovered := collectDiscoveryResponses(discoveryID, *discoveryTimeout, responses)
 		pendingID.Store(0)
@@ -108,7 +107,7 @@ func runShell(args []string) {
 		stdout: os.Stdout,
 		stderr: os.Stderr,
 		ping: func() {
-			doPing(*beamURL, workspaceID, selectedUser, *timeout, &nextID, &pendingID, responses, os.Stdout, os.Stderr, sendIPv4To)
+			doPing(*beamURL, selectedUser, *timeout, &pendingID, responses, os.Stdout, os.Stderr, sendBeamDatagram)
 		},
 	}
 
@@ -185,8 +184,8 @@ func runShell(args []string) {
 	}
 }
 
-func sendDiscoveryProbe(beamURL string, workspace int, responseJitter time.Duration, requestID uint32) error {
-	env := &rpcpb.Envelope{
+func sendDiscoveryProbe(beamURL string, responseJitter time.Duration, requestID uint32) error {
+	envelope := &rpcpb.Envelope{
 		RequestId: requestID,
 		Payload: &rpcpb.Envelope_Request{Request: &rpcpb.RpcRequest{
 			Method: &rpcpb.RpcRequest_Discover{Discover: &rpcpb.DiscoverRequest{
@@ -194,11 +193,11 @@ func sendDiscoveryProbe(beamURL string, workspace int, responseJitter time.Durat
 			}},
 		}},
 	}
-	b64, err := marshalEnvelope(env)
+	data, err := marshalEnvelope(envelope)
 	if err != nil {
 		return fmt.Errorf("encode probe: %w", err)
 	}
-	if err := sendIPv4To(beamURL, workspace, 0, b64); err != nil {
+	if _, err := sendBeamDatagram(beamURL, 0, data); err != nil {
 		return fmt.Errorf("send probe: %w", err)
 	}
 	return nil

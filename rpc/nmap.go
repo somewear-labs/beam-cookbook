@@ -82,7 +82,7 @@ func runNmap(args []string) {
 	}()
 	defer server.Close()
 
-	if err := sendDiscoveryProbe(*beamURL, workspaceID, *responseJitter, requestID); err != nil {
+	if err := sendDiscoveryProbe(*beamURL, *responseJitter, requestID); err != nil {
 		fmt.Fprintln(os.Stderr, "nmap: could not send discovery probe:", err)
 		return
 	}
