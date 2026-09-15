@@ -1,6 +1,10 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -73,6 +77,69 @@ func TestDiscoveryPayloadsStayWithinSatelliteBudget(t *testing.T) {
 	}
 	if size := proto.Size(response); size > 80 {
 		t.Fatalf("maximum discovery response is %d bytes; want <= 80", size)
+	}
+}
+
+func TestDiscoveryProbeUsesBeamDatagram(t *testing.T) {
+	var request struct {
+		Data         string `json:"data"`
+		TargetUserID string `json:"targetUserId"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/datagrams" {
+			t.Errorf("path = %q, want /api/datagrams", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+		}
+		fmt.Fprint(w, `{"datagramId":{"timestamp":"2026-09-15T12:00:00Z","sourceUserId":"42","sequence":1}}`)
+	}))
+	defer server.Close()
+
+	if err := sendDiscoveryProbe(server.URL, 0, 42); err != nil {
+		t.Fatal(err)
+	}
+	if request.TargetUserID != "" {
+		t.Fatalf("targetUserId = %q, want broadcast", request.TargetUserID)
+	}
+	envelope, err := unmarshalEnvelope(request.Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if envelope.RequestId != 42 || envelope.GetRequest().GetDiscover() == nil {
+		t.Fatalf("application protobuf = %+v", envelope)
+	}
+}
+
+func TestDiscoveryResponseReferencesRequestDatagram(t *testing.T) {
+	var request struct {
+		InResponseTo beamDatagramID `json:"inResponseTo"`
+		Data         string         `json:"data"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/datagrams" {
+			t.Errorf("path = %q, want /api/datagrams", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+		}
+		fmt.Fprint(w, `{"datagramId":{"timestamp":"2026-09-15T12:00:01Z","sourceUserId":"99","sequence":2}}`)
+	}))
+	defer server.Close()
+
+	s := rpcServer{beamURL: server.URL}
+	requestID := beamDatagramID{Timestamp: "2026-09-15T12:00:00Z", SourceUserID: "384899", Sequence: 1}
+	s.handleDiscover(42, 384899, &rpcpb.DiscoverRequest{}, &requestID)
+
+	if request.InResponseTo != requestID {
+		t.Fatalf("datagram response = %+v", request)
+	}
+	envelope, err := unmarshalEnvelope(request.Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if envelope.RequestId != 42 || envelope.GetResponse().GetDiscover() == nil {
+		t.Fatalf("application protobuf = %+v", envelope)
 	}
 }
 
