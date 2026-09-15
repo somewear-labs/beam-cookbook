@@ -1,8 +1,6 @@
 package main
 
 import (
-	"encoding/binary"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"strings"
@@ -53,50 +51,50 @@ func (c shellSlashCommands) handle(command string) bool {
 
 func doPing(
 	beamURL string,
-	workspace int,
 	targetUserID int64,
 	route sessionRoute,
 	timeout time.Duration,
-	nextID, pendingID *atomic.Uint32,
+	pendingID *atomic.Uint32,
 	responses <-chan inboundEnvelope,
 	stdout, stderr io.Writer,
-	send packageSender,
+	send datagramSender,
 ) bool {
-	id := nextID.Add(1)
-	pendingID.Store(id)
-	defer pendingID.Store(0)
-
 	startedAt := time.Now()
+	requestID := randomRequestID()
 	envelope := &rpcpb.Envelope{
-		RequestId: id,
+		RequestId: requestID,
 		SessionId: route.id,
-		Payload: &rpcpb.Envelope_Request{
-			Request: &rpcpb.RpcRequest{
-				Method: &rpcpb.RpcRequest_Ping{Ping: &rpcpb.PingRequest{
-					ClientSendUnixMillis: startedAt.UnixMilli(),
-				}},
-			},
-		},
+		Payload: &rpcpb.Envelope_Request{Request: &rpcpb.RpcRequest{
+			Method: &rpcpb.RpcRequest_Ping{Ping: &rpcpb.PingRequest{
+				ClientSendUnixMillis: startedAt.UnixMilli(),
+			}},
+		}},
 	}
-	payload, err := marshalEnvelope(envelope)
+	data, err := marshalEnvelope(envelope)
 	if err != nil {
 		fmt.Fprintln(stderr, "[ping encode error]", err)
 		return false
 	}
-	if err := send(beamURL, workspace, targetUserID, payload, route.channels); err != nil {
+	requestDatagramID, err := send(beamURL, targetUserID, data)
+	if err != nil {
 		fmt.Fprintln(stderr, "[ping send error]", err)
 		return false
 	}
+	pendingID.Store(requestID)
+	defer pendingID.Store(0)
 
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	for {
 		select {
 		case inbound := <-responses:
-			if inbound.envelope.GetRequestId() != id {
+			if inbound.envelope.GetRequestId() != requestID {
 				continue
 			}
 			if inbound.envelope.GetSessionId() != route.id {
+				continue
+			}
+			if inbound.inResponseTo == nil || *inbound.inResponseTo != requestDatagramID {
 				continue
 			}
 			response := inbound.envelope.GetResponse()
@@ -120,15 +118,6 @@ func doPing(
 				fmt.Fprintf(stdout, "  target → client  wall %s · computed %s\n", formatPingDuration(timings.targetToClientWall), formatPingDuration(timings.targetToClientComputed))
 				fmt.Fprintf(stdout, "  round trip       wall %s · computed %s\n", formatPingDuration(timings.roundTripWall), formatPingDuration(timings.roundTripComputed))
 				fmt.Fprintf(stdout, "  clock offset     %s (%s)\n", formatSignedPingDuration(timings.clockOffset), clockOffsetDirection(timings.clockOffset))
-				requestPackageSentAt := time.Unix(ping.GetClientPackageSendUnixSeconds(), 0)
-				if ping.GetClientPackageSendUnixSeconds() > 0 && ping.GetClientAccountId() > 0 && !inbound.packageSentAt.IsZero() {
-					fmt.Fprintf(
-						stdout,
-						"  datagrams        request %s · response %s\n",
-						ipv4DatagramID(requestPackageSentAt, ping.GetClientAccountId()),
-						ipv4DatagramID(inbound.packageSentAt, targetUserID),
-					)
-				}
 				return true
 			}
 			if rpcError := response.GetError(); rpcError != nil {
@@ -140,21 +129,6 @@ func doPing(
 			return false
 		}
 	}
-}
-
-func ipv4DatagramID(timestamp time.Time, sourceAccountID int64) string {
-	buffer := make([]byte, 0, 16)
-	timestampBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(timestampBytes, uint32(timestamp.Unix()))
-	buffer = append(buffer, timestampBytes...)
-	buffer = append(buffer, byte(55)) // PackageType.IPv4Datagram
-
-	var varint [10]byte
-	n := binary.PutUvarint(varint[:], uint64(sourceAccountID))
-	buffer = append(buffer, varint[:n]...)
-	n = binary.PutUvarint(varint[:], 0) // datagram_sequence
-	buffer = append(buffer, varint[:n]...)
-	return hex.EncodeToString(buffer)
 }
 
 type gridPingTimings struct {

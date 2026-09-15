@@ -87,12 +87,12 @@ func runShell(args []string) {
 		}
 
 		discoveryID := randomRequestID()
-		pendingID.Store(discoveryID)
-		if err := sendDiscoveryProbe(*beamURL, workspaceID, *responseJitter, discoveryID, route.channels); err != nil {
-			pendingID.Store(0)
+		err := sendDiscoveryProbe(*beamURL, *responseJitter, discoveryID, route.channels)
+		if err != nil {
 			fmt.Fprintln(os.Stderr, "shell: discovery failed:", err)
 			return
 		}
+		pendingID.Store(discoveryID)
 		fmt.Printf("Discovering targets for %s...\n", discoveryTimeout.String())
 		discovered := collectDiscoveryResponses(discoveryID, *discoveryTimeout, responses)
 		pendingID.Store(0)
@@ -133,7 +133,7 @@ func runShell(args []string) {
 		stdout: os.Stdout,
 		stderr: os.Stderr,
 		ping: func() {
-			doPing(*beamURL, workspaceID, selectedUser, route, *timeout, &nextID, &pendingID, responses, os.Stdout, os.Stderr, sendIPv4WithChannels)
+			doPing(*beamURL, selectedUser, route, *timeout, &pendingID, responses, os.Stdout, os.Stderr, sendBeamDatagram)
 		},
 	}
 
@@ -211,8 +211,8 @@ func runShell(args []string) {
 	}
 }
 
-func sendDiscoveryProbe(beamURL string, workspace int, responseJitter time.Duration, requestID uint32, channels []rpcpb.SessionChannel) error {
-	env := &rpcpb.Envelope{
+func sendDiscoveryProbe(beamURL string, responseJitter time.Duration, requestID uint32, channels []rpcpb.SessionChannel) error {
+	envelope := &rpcpb.Envelope{
 		RequestId: requestID,
 		Payload: &rpcpb.Envelope_Request{Request: &rpcpb.RpcRequest{
 			Method: &rpcpb.RpcRequest_Discover{Discover: &rpcpb.DiscoverRequest{
@@ -221,11 +221,12 @@ func sendDiscoveryProbe(beamURL string, workspace int, responseJitter time.Durat
 			}},
 		}},
 	}
-	b64, err := marshalEnvelope(env)
+	data, err := marshalEnvelope(envelope)
 	if err != nil {
 		return fmt.Errorf("encode probe: %w", err)
 	}
-	if err := sendIPv4WithChannels(beamURL, workspace, 0, b64, channels); err != nil {
+	_, err = sendBeamDatagram(beamURL, 0, data)
+	if err != nil {
 		return fmt.Errorf("send probe: %w", err)
 	}
 	return nil

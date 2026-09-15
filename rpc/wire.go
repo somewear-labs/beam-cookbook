@@ -110,10 +110,19 @@ func sendIPv4WithChannels(beamURL string, workspaceID int, targetUserID int64, b
 }
 
 type inboundEnvelope struct {
-	envelope      *rpcpb.Envelope
-	sourceUserID  int64
-	packageSentAt time.Time
-	receivedAt    time.Time
+	envelope     *rpcpb.Envelope
+	sourceUserID int64
+	receivedAt   time.Time
+	datagramID   *beamDatagramID
+	inResponseTo *beamDatagramID
+}
+
+type webhookEvent struct {
+	Type         string          `json:"type"`
+	Payload      json.RawMessage `json:"payload"`
+	Data         string          `json:"data"`
+	DatagramID   *beamDatagramID `json:"datagramId"`
+	InResponseTo *beamDatagramID `json:"inResponseTo"`
 }
 
 // parseWebhookEnvelopes extracts and deserializes all Envelope protos from a Beam webhook POST body.
@@ -123,11 +132,7 @@ func parseWebhookEnvelopes(body []byte) []inboundEnvelope {
 			Account struct {
 				ID string `json:"id"`
 			} `json:"account"`
-			Events []struct {
-				Type      string `json:"type"`
-				Payload   string `json:"payload"`
-				Timestamp string `json:"timestamp"`
-			} `json:"events"`
+			Events []webhookEvent `json:"events"`
 		} `json:"payloads"`
 	}
 	if err := json.Unmarshal(body, &data); err != nil {
@@ -138,24 +143,32 @@ func parseWebhookEnvelopes(body []byte) []inboundEnvelope {
 	for _, p := range data.Payloads {
 		sourceUserID, _ := strconv.ParseInt(p.Account.ID, 10, 64)
 		for _, event := range p.Events {
-			if event.Type != "Data" {
+			var env *rpcpb.Envelope
+			var err error
+			switch event.Type {
+			case "Data":
+				var payload string
+				if err = json.Unmarshal(event.Payload, &payload); err == nil {
+					env, err = unmarshalEnvelope(payload)
+				}
+				if err == nil && env.Namespace != EnvelopeNamespace {
+					continue
+				}
+			case "GridDatagram":
+				env, err = gridDatagramEnvelope(event)
+			default:
 				continue
 			}
-			env, err := unmarshalEnvelope(event.Payload)
-			if err != nil {
-				fmt.Printf("  Could not decode envelope: %v\n", err)
+			if err != nil || env == nil {
+				fmt.Printf("  Could not decode RPC event: %v\n", err)
 				continue
 			}
-			if env.Namespace != EnvelopeNamespace {
-				fmt.Printf("  Ignoring non-RPC IPv4Datagram (namespace=%q)\n", env.Namespace)
-				continue
-			}
-			packageSentAt, _ := time.Parse(time.RFC3339, event.Timestamp)
 			out = append(out, inboundEnvelope{
-				envelope:      env,
-				sourceUserID:  sourceUserID,
-				packageSentAt: packageSentAt,
-				receivedAt:    time.Now(),
+				envelope:     env,
+				sourceUserID: sourceUserID,
+				receivedAt:   time.Now(),
+				datagramID:   event.DatagramID,
+				inResponseTo: event.InResponseTo,
 			})
 		}
 	}

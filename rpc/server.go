@@ -90,7 +90,7 @@ func (s *rpcServer) handleWebhook(w http.ResponseWriter, r *http.Request) {
 					env.RequestId, inbound.sourceUserID, env.SessionId)
 				continue
 			}
-			s.handleRequest(env, inbound.sourceUserID, inbound.packageSentAt, inbound.receivedAt)
+			s.handleRequest(env, inbound.sourceUserID, inbound.receivedAt, inbound.datagramID)
 		case *rpcpb.Envelope_Response:
 			fmt.Printf("[req %d] Received response (ignoring)\n", env.RequestId)
 		default:
@@ -99,7 +99,7 @@ func (s *rpcServer) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *rpcServer) handleRequest(env *rpcpb.Envelope, sourceUserID int64, packageSentAt, receivedAt time.Time) {
+func (s *rpcServer) handleRequest(env *rpcpb.Envelope, sourceUserID int64, receivedAt time.Time, requestDatagramID *beamDatagramID) {
 	req := env.GetRequest()
 	switch req.Method.(type) {
 	case *rpcpb.RpcRequest_Exec:
@@ -113,15 +113,19 @@ func (s *rpcServer) handleRequest(env *rpcpb.Envelope, sourceUserID int64, packa
 		s.handleConnect(env.RequestId, sourceUserID, req.GetConnect())
 	case *rpcpb.RpcRequest_Discover:
 		if s.acceptDiscovery(sourceUserID, env.RequestId) {
-			go s.handleDiscover(env.RequestId, sourceUserID, req.GetDiscover())
+			go s.handleDiscover(env.RequestId, sourceUserID, req.GetDiscover(), requestDatagramID)
 		}
 	case *rpcpb.RpcRequest_Ping:
 		route, ok := s.routeForSession(sourceUserID, env.GetSessionId())
 		if !ok {
+			if requestDatagramID != nil {
+				s.sendDatagramError(env.RequestId, env.GetSessionId(), *requestDatagramID, "unknown or expired shell session")
+				return
+			}
 			s.sendError(env.RequestId, sourceUserID, sessionRoute{id: env.GetSessionId()}, "unknown or expired shell session")
 			return
 		}
-		s.handlePing(env.RequestId, sourceUserID, route, packageSentAt, receivedAt)
+		s.handlePing(env.RequestId, sourceUserID, route, receivedAt, requestDatagramID)
 	case *rpcpb.RpcRequest_Disconnect:
 		if env.GetSessionId() != 0 {
 			s.sessions.remove(sourceUserID, env.GetSessionId())
@@ -138,13 +142,9 @@ func (s *rpcServer) routeForSession(peerAccountID int64, sessionID uint64) (sess
 	return s.sessions.get(peerAccountID, sessionID)
 }
 
-func (s *rpcServer) handlePing(reqID uint32, targetUserID int64, route sessionRoute, packageSentAt, receivedAt time.Time) {
+func (s *rpcServer) handlePing(reqID uint32, targetUserID int64, route sessionRoute, receivedAt time.Time, requestDatagramID *beamDatagramID) {
 	if receivedAt.IsZero() {
 		receivedAt = time.Now()
-	}
-	var packageSendUnixSeconds int64
-	if !packageSentAt.IsZero() {
-		packageSendUnixSeconds = packageSentAt.Unix()
 	}
 	resp := &rpcpb.Envelope{
 		RequestId: reqID,
@@ -152,10 +152,8 @@ func (s *rpcServer) handlePing(reqID uint32, targetUserID int64, route sessionRo
 		Payload: &rpcpb.Envelope_Response{
 			Response: &rpcpb.RpcResponse{
 				Result: &rpcpb.RpcResponse_Ping{Ping: &rpcpb.PingResponse{
-					TargetReceiveUnixMillis:      receivedAt.UnixMilli(),
-					TargetSendUnixMillis:         time.Now().UnixMilli(),
-					ClientPackageSendUnixSeconds: packageSendUnixSeconds,
-					ClientAccountId:              targetUserID,
+					TargetReceiveUnixMillis: receivedAt.UnixMilli(),
+					TargetSendUnixMillis:    time.Now().UnixMilli(),
 				}},
 			},
 		},
@@ -165,7 +163,7 @@ func (s *rpcServer) handlePing(reqID uint32, targetUserID int64, route sessionRo
 		fmt.Fprintln(os.Stderr, "  Failed to marshal ping response:", err)
 		return
 	}
-	if err := sendIPv4WithChannels(s.beamURL, s.workspaceID, targetUserID, b64, route.channels); err != nil {
+	if err := s.sendResponse(requestDatagramID, targetUserID, b64, route.channels); err != nil {
 		fmt.Fprintln(os.Stderr, "  Failed to send ping response:", err)
 	}
 }
@@ -188,7 +186,7 @@ func (s *rpcServer) acceptDiscovery(sourceUserID int64, requestID uint32) bool {
 	return true
 }
 
-func (s *rpcServer) handleDiscover(reqID uint32, targetUserID int64, req *rpcpb.DiscoverRequest) {
+func (s *rpcServer) handleDiscover(reqID uint32, targetUserID int64, req *rpcpb.DiscoverRequest, requestDatagramID *beamDatagramID) {
 	var channels []rpcpb.SessionChannel
 	if len(req.GetChannels()) > 0 {
 		validated, err := validateSessionChannels(req.GetChannels())
@@ -226,11 +224,35 @@ func (s *rpcServer) handleDiscover(reqID uint32, targetUserID int64, req *rpcpb.
 		fmt.Fprintln(os.Stderr, "  Failed to marshal discovery response:", err)
 		return
 	}
-	if err := sendIPv4WithChannels(s.beamURL, s.workspaceID, targetUserID, b64, channels); err != nil {
+	if err := s.sendResponse(requestDatagramID, targetUserID, b64, channels); err != nil {
 		fmt.Fprintln(os.Stderr, "  Failed to send discovery response:", err)
 		return
 	}
 	fmt.Printf("[req %d] Discovery response sent to account %d\n", reqID, targetUserID)
+}
+
+func (s *rpcServer) sendDatagramError(reqID uint32, sessionID uint64, requestDatagramID beamDatagramID, message string) {
+	response := &rpcpb.Envelope{
+		RequestId: reqID,
+		SessionId: sessionID,
+		Payload: &rpcpb.Envelope_Response{Response: &rpcpb.RpcResponse{
+			Result: &rpcpb.RpcResponse_Error{Error: &rpcpb.RpcError{Message: message}},
+		}},
+	}
+	data, err := marshalEnvelope(response)
+	if err == nil {
+		err = respondWithBeamDatagram(s.beamURL, requestDatagramID, data)
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "  Failed to send RPC error:", err)
+	}
+}
+
+func (s *rpcServer) sendResponse(requestDatagramID *beamDatagramID, targetUserID int64, data string, channels []rpcpb.SessionChannel) error {
+	if requestDatagramID != nil {
+		return respondWithBeamDatagram(s.beamURL, *requestDatagramID, data)
+	}
+	return sendIPv4WithChannels(s.beamURL, s.workspaceID, targetUserID, data, channels)
 }
 
 func (s *rpcServer) handleExec(reqID uint32, targetUserID int64, route sessionRoute, req *rpcpb.ExecRequest) {

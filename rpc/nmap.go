@@ -53,8 +53,8 @@ func runNmap(args []string) {
 		return
 	}
 
-	requestID := randomRequestID()
 	responses := make(chan inboundEnvelope, 64)
+	requestID := randomRequestID()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -83,7 +83,8 @@ func runNmap(args []string) {
 	}()
 	defer server.Close()
 
-	if err := sendDiscoveryProbe(*beamURL, workspaceID, *responseJitter, requestID, nil); err != nil {
+	err = sendDiscoveryProbe(*beamURL, *responseJitter, requestID, nil)
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "nmap: could not send discovery probe:", err)
 		return
 	}

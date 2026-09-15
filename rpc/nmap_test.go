@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -81,38 +82,32 @@ func TestDiscoveryPayloadsStayWithinSatelliteBudget(t *testing.T) {
 	}
 }
 
-func TestConstrainedDiscoveryProbeUsesRequestedChannels(t *testing.T) {
+func TestDiscoveryProbeUsesBeamDatagram(t *testing.T) {
 	var request struct {
-		WorkspaceID int      `json:"workspaceId"`
-		Channels    []string `json:"channels"`
-		IPv4        struct {
-			Payload string `json:"payload"`
-		} `json:"ipv4"`
+		Data string `json:"data"`
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/package/async" {
-			t.Errorf("path = %q, want /api/package/async", r.URL.Path)
+		if r.URL.Path != "/api/datagrams" {
+			t.Errorf("path = %q, want /api/datagrams", r.URL.Path)
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Error(err)
 		}
-		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"datagramId":{"timestamp":"2026-09-15T12:00:00Z","sourceUserId":"42","sequence":1}}`)
 	}))
 	defer server.Close()
 
 	channels := []rpcpb.SessionChannel{rpcpb.SessionChannel_RADIO}
-	if err := sendDiscoveryProbe(server.URL, 22902, 0, 42, channels); err != nil {
+	if err := sendDiscoveryProbe(server.URL, 0, 42, channels); err != nil {
 		t.Fatal(err)
 	}
-	if request.WorkspaceID != 22902 || len(request.Channels) != 1 || request.Channels[0] != "Radio" {
-		t.Fatalf("routing request = %+v", request)
-	}
-	envelope, err := unmarshalEnvelope(request.IPv4.Payload)
+	envelope, err := unmarshalEnvelope(request.Data)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !sameSessionChannels(envelope.GetRequest().GetDiscover().GetChannels(), channels) {
-		t.Fatalf("probe channels = %v, want %v", envelope.GetRequest().GetDiscover().GetChannels(), channels)
+	discover := envelope.GetRequest().GetDiscover()
+	if envelope.RequestId != 42 || !sameSessionChannels(discover.GetChannels(), channels) {
+		t.Fatalf("application protobuf = %+v", envelope)
 	}
 }
 
@@ -134,7 +129,7 @@ func TestConstrainedDiscoveryResponseUsesRequestedChannels(t *testing.T) {
 
 	channels := []rpcpb.SessionChannel{rpcpb.SessionChannel_RADIO}
 	s := rpcServer{workspaceID: 22902, beamURL: server.URL}
-	s.handleDiscover(42, 384899, &rpcpb.DiscoverRequest{Channels: channels})
+	s.handleDiscover(42, 384899, &rpcpb.DiscoverRequest{Channels: channels}, nil)
 
 	if request.TargetUserID != 384899 || len(request.Channels) != 1 || request.Channels[0] != "Radio" {
 		t.Fatalf("routing request = %+v", request)
@@ -145,6 +140,44 @@ func TestConstrainedDiscoveryResponseUsesRequestedChannels(t *testing.T) {
 	}
 	if !sameSessionChannels(envelope.GetResponse().GetDiscover().GetChannels(), channels) {
 		t.Fatalf("response channels = %v, want %v", envelope.GetResponse().GetDiscover().GetChannels(), channels)
+	}
+}
+
+func TestDiscoveryResponseReferencesRequestDatagram(t *testing.T) {
+	var request struct {
+		InResponseTo beamDatagramID `json:"inResponseTo"`
+		Data         string         `json:"data"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/datagrams" {
+			t.Errorf("path = %q, want /api/datagrams", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+		}
+		fmt.Fprint(w, `{"datagramId":{"timestamp":"2026-09-15T12:00:01Z","sourceUserId":"99","sequence":2}}`)
+	}))
+	defer server.Close()
+
+	s := rpcServer{beamURL: server.URL}
+	requestID := beamDatagramID{Timestamp: "2026-09-15T12:00:00Z", SourceUserID: "384899", Sequence: 1}
+	s.handleDiscover(
+		42,
+		384899,
+		&rpcpb.DiscoverRequest{Channels: []rpcpb.SessionChannel{rpcpb.SessionChannel_RADIO}},
+		&requestID,
+	)
+
+	if request.InResponseTo != requestID {
+		t.Fatalf("datagram response = %+v", request)
+	}
+	envelope, err := unmarshalEnvelope(request.Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	channels := envelope.GetResponse().GetDiscover().GetChannels()
+	if len(channels) != 1 || channels[0] != rpcpb.SessionChannel_RADIO {
+		t.Fatalf("application protobuf = %+v", envelope)
 	}
 }
 

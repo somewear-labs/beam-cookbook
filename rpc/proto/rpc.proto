@@ -3,7 +3,7 @@ syntax = "proto3";
 package somewear.rpc;
 option go_package = "somewear/rpc/proto;rpcpb";
 
-// Envelope is the top-level payload carried inside every IPv4Datagram.
+// Envelope is the application payload carried inside a GridDatagram.
 // request_id correlates async responses back to their originating request.
 // namespace must equal EnvelopeNamespace; packets without it are discarded.
 message Envelope {
@@ -88,10 +88,7 @@ message PingRequest {
 message PingResponse {
   int64 target_receive_unix_millis = 1;
   int64 target_send_unix_millis = 2;
-  // Echoed from Beam's inbound webhook timestamp. Together with the source
-  // account and package type, this reconstructs the request datagram ID.
-  int64 client_package_send_unix_seconds = 3;
-  int64 client_account_id = 4;
+  reserved 3, 4;
 }
 
 // --- Discovery ---
