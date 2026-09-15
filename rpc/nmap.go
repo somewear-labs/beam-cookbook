@@ -5,11 +5,9 @@ import (
 	"encoding/binary"
 	"flag"
 	"fmt"
-	"io"
-	"net"
-	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -32,7 +30,6 @@ type discoveredTarget struct {
 
 func runNmap(args []string) {
 	fs := flag.NewFlagSet("nmap", flag.ExitOnError)
-	webhookPort := fs.Int("webhook-port", 8080, "Port to receive discovery responses on")
 	timeout := fs.Duration("timeout", 5*time.Second, "How long to collect discovery responses")
 	responseJitter := fs.Duration("response-jitter", 750*time.Millisecond, "Maximum target response jitter")
 	beamURL := fs.String("beam-url", defaultBeamURL, "Beam API URL for sending the probe")
@@ -53,63 +50,36 @@ func runNmap(args []string) {
 	}
 
 	requestID := randomRequestID()
-	responses := make(chan inboundEnvelope, 64)
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		w.WriteHeader(http.StatusOK)
-		for _, inbound := range parseWebhookEnvelopes(body) {
-			if inbound.envelope.RequestId != requestID || inbound.envelope.GetResponse().GetDiscover() == nil {
-				continue
-			}
-			select {
-			case responses <- inbound:
-			default:
-			}
-		}
-	})
-
-	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", *webhookPort))
+	requestDatagramID, err := sendDiscoveryProbe(*beamURL, *responseJitter, requestID)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "nmap: could not start webhook listener:", err)
-		return
-	}
-	server := &http.Server{Handler: mux}
-	go func() {
-		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
-			fmt.Fprintln(os.Stderr, "nmap: webhook server error:", err)
-		}
-	}()
-	defer server.Close()
-
-	if err := sendDiscoveryProbe(*beamURL, *responseJitter, requestID); err != nil {
 		fmt.Fprintln(os.Stderr, "nmap: could not send discovery probe:", err)
 		return
 	}
 
 	fmt.Printf("Scanning Beam active workspace %d for %s...\n", workspaceID, timeout.String())
-	targets := collectDiscoveryResponses(requestID, *timeout, responses)
+	responses, err := responsesForBeamDatagram(*beamURL, requestDatagramID, *timeout, 0)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "nmap: could not collect discovery responses:", err)
+		return
+	}
+	targets := collectDiscoveryResponses(requestID, responses)
 	printDiscoveredTargets(targets)
 }
 
-func collectDiscoveryResponses(requestID uint32, timeout time.Duration, responses <-chan inboundEnvelope) map[int64]discoveredTarget {
+func collectDiscoveryResponses(requestID uint32, responses []beamDatagram) map[int64]discoveredTarget {
 	targets := make(map[int64]discoveredTarget)
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-
-collect:
-	for {
-		select {
-		case inbound := <-responses:
-			if inbound.envelope.RequestId != requestID || inbound.envelope.GetResponse().GetDiscover() == nil {
-				continue
-			}
-			targets[inbound.sourceUserID] = discoveredTarget{
-				accountID: inbound.sourceUserID,
-				response:  inbound.envelope.GetResponse().GetDiscover(),
-			}
-		case <-timer.C:
-			break collect
+	for _, response := range responses {
+		envelope, err := unmarshalEnvelope(response.Data)
+		if err != nil || envelope.RequestId != requestID || envelope.GetResponse().GetDiscover() == nil {
+			continue
+		}
+		accountID, err := strconv.ParseInt(response.DatagramID.SourceUserID, 10, 64)
+		if err != nil || accountID <= 0 {
+			continue
+		}
+		targets[accountID] = discoveredTarget{
+			accountID: accountID,
+			response:  envelope.GetResponse().GetDiscover(),
 		}
 	}
 	return targets
