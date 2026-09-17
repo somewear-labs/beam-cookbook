@@ -6,13 +6,17 @@ option go_package = "somewear/rpc/proto;rpcpb";
 // Envelope is the top-level payload carried inside every IPv4Datagram.
 // request_id correlates async responses back to their originating request.
 // namespace must equal EnvelopeNamespace; packets without it are discarded.
+// source_user_id carries the sender's Beam userAccountId so the receiver can
+// reply directly without relying on Beam stamping account.id in the webhook.
 message Envelope {
-  string namespace   = 1;
-  uint32 request_id  = 2;
+  string namespace      = 1;
+  uint32 request_id     = 2;
   oneof payload {
     RpcRequest  request  = 3;
     RpcResponse response = 4;
   }
+  int64 source_user_id  = 5;
+  int64 target_user_id  = 6;
 }
 
 // RpcRequest carries a single method call. Add new methods here as a new oneof field.

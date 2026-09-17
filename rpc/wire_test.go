@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	rpcpb "somewear/rpc/proto"
 )
@@ -39,7 +38,7 @@ func TestActiveWorkspaceIDRequiresBeamSelection(t *testing.T) {
 	}
 }
 
-func TestSendIPv4ToAddsTargetOnlyForUnicast(t *testing.T) {
+func TestSendIPv4AddsTargetOnlyForUnicast(t *testing.T) {
 	var requests []map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request map[string]any
@@ -51,10 +50,10 @@ func TestSendIPv4ToAddsTargetOnlyForUnicast(t *testing.T) {
 	}))
 	defer server.Close()
 
-	if err := sendIPv4(server.URL, 22902, "broadcast"); err != nil {
+	if err := sendIPv4(server.URL, 22902, 0, "broadcast"); err != nil {
 		t.Fatal(err)
 	}
-	if err := sendIPv4To(server.URL, 22902, 384899, "unicast"); err != nil {
+	if err := sendIPv4(server.URL, 22902, 384899, "unicast"); err != nil {
 		t.Fatal(err)
 	}
 	if _, exists := requests[0]["targetUserId"]; exists {
@@ -62,6 +61,11 @@ func TestSendIPv4ToAddsTargetOnlyForUnicast(t *testing.T) {
 	}
 	if got := int64(requests[1]["targetUserId"].(float64)); got != 384899 {
 		t.Fatalf("targetUserId = %d, want 384899", got)
+	}
+	for i, req := range requests {
+		if got := int(req["collapseKey"].(float64)); got != 3 {
+			t.Fatalf("requests[%d] collapseKey = %d, want 3", i, got)
+		}
 	}
 }
 
@@ -75,15 +79,11 @@ func TestParseWebhookEnvelopesPreservesRoutingMetadata(t *testing.T) {
 		payload,
 	))
 
-	got := parseWebhookEnvelopes(body)
+	got := parseWebhookEnvelopesWithSender(body)
 	if len(got) != 1 {
-		t.Fatalf("parseWebhookEnvelopes() returned %d envelopes", len(got))
+		t.Fatalf("parseWebhookEnvelopesWithSender() returned %d envelopes", len(got))
 	}
-	if got[0].sourceUserID != 383626 {
-		t.Fatalf("sourceUserID = %d, want 383626", got[0].sourceUserID)
-	}
-	want := time.Date(2026, 8, 24, 15, 56, 31, 0, time.UTC)
-	if !got[0].packageSentAt.Equal(want) {
-		t.Fatalf("packageSentAt = %s, want %s", got[0].packageSentAt, want)
+	if got[0].SourceUserID != 383626 {
+		t.Fatalf("SourceUserID = %d, want 383626", got[0].SourceUserID)
 	}
 }

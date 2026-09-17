@@ -53,13 +53,13 @@ func runNmap(args []string) {
 	}
 
 	requestID := randomRequestID()
-	responses := make(chan inboundEnvelope, 64)
+	responses := make(chan *WebhookEnvelope, 64)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		w.WriteHeader(http.StatusOK)
-		for _, inbound := range parseWebhookEnvelopes(body) {
-			if inbound.envelope.RequestId != requestID || inbound.envelope.GetResponse().GetDiscover() == nil {
+		for _, inbound := range parseWebhookEnvelopesWithSender(body) {
+			if inbound.Envelope.RequestId != requestID || inbound.Envelope.GetResponse().GetDiscover() == nil {
 				continue
 			}
 			select {
@@ -92,7 +92,7 @@ func runNmap(args []string) {
 	printDiscoveredTargets(targets)
 }
 
-func collectDiscoveryResponses(requestID uint32, timeout time.Duration, responses <-chan inboundEnvelope) map[int64]discoveredTarget {
+func collectDiscoveryResponses(requestID uint32, timeout time.Duration, responses <-chan *WebhookEnvelope) map[int64]discoveredTarget {
 	targets := make(map[int64]discoveredTarget)
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
@@ -101,12 +101,12 @@ collect:
 	for {
 		select {
 		case inbound := <-responses:
-			if inbound.envelope.RequestId != requestID || inbound.envelope.GetResponse().GetDiscover() == nil {
+			if inbound.Envelope.RequestId != requestID || inbound.Envelope.GetResponse().GetDiscover() == nil {
 				continue
 			}
-			targets[inbound.sourceUserID] = discoveredTarget{
-				accountID: inbound.sourceUserID,
-				response:  inbound.envelope.GetResponse().GetDiscover(),
+			targets[inbound.SourceUserID] = discoveredTarget{
+				accountID: inbound.SourceUserID,
+				response:  inbound.Envelope.GetResponse().GetDiscover(),
 			}
 		case <-timer.C:
 			break collect

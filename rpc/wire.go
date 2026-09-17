@@ -16,6 +16,8 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+var beamHTTPClient = &http.Client{Timeout: 10 * time.Second}
+
 const (
 	defaultBeamURL     = "http://localhost:9091"
 	defaultWorkspaceID = 39054
@@ -76,20 +78,19 @@ func unmarshalEnvelope(b64 string) (*rpcpb.Envelope, error) {
 	return &env, nil
 }
 
-func sendIPv4(beamURL string, workspaceID int, b64payload string) error {
-	return sendIPv4To(beamURL, workspaceID, 0, b64payload)
-}
-
-func sendIPv4To(beamURL string, workspaceID int, targetUserID int64, b64payload string) error {
-	request := map[string]any{
-		"workspaceId": workspaceID,
+func sendIPv4(beamURL string, workspaceID int, targetUserID int64, b64payload string) error {
+	bodyMap := map[string]any{
 		"ipv4":        map[string]any{"payload": b64payload},
+		"collapseKey": 3,
+	}
+	if workspaceID != 0 {
+		bodyMap["workspaceId"] = workspaceID
 	}
 	if targetUserID != 0 {
-		request["targetUserId"] = targetUserID
+		bodyMap["targetUserId"] = targetUserID
 	}
-	body, _ := json.Marshal(request)
-	resp, err := http.Post(strings.TrimRight(beamURL, "/")+"/api/package/ipv4/async", "application/json", bytes.NewReader(body))
+	body, _ := json.Marshal(bodyMap)
+	resp, err := http.Post(beamURL+"/api/package/ipv4/async", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -100,17 +101,80 @@ func sendIPv4To(beamURL string, workspaceID int, targetUserID int64, b64payload 
 	return nil
 }
 
-type inboundEnvelope struct {
-	envelope      *rpcpb.Envelope
-	sourceUserID  int64
-	packageSentAt time.Time
-	receivedAt    time.Time
+// fetchSourceUserID queries the local Beam daemon for the current user's
+// workspace-scoped member ID. It tries three sources in order:
+//  1. /api/account/user-id: direct query (available on Beam builds that include this endpoint)
+//  2. outbound payloads: sourceUserId is our member ID
+//  3. inbound payloads: targetUserId is our member ID (works on fresh installs
+//     that have received at least one packet but never sent)
+//
+// Returns 0 if unavailable (e.g. daemon unreachable, not yet signed in).
+func fetchSourceUserID(beamURL string) int64 {
+	if id := fetchUserIDFromAccountEndpoint(beamURL); id != 0 {
+		return id
+	}
+	if id := fetchUserIDFromPayloads(beamURL, "outbound", "sourceUserId"); id != 0 {
+		return id
+	}
+	return fetchUserIDFromPayloads(beamURL, "inbound", "targetUserId")
 }
 
-// parseWebhookEnvelopes extracts and deserializes all Envelope protos from a Beam webhook POST body.
-func parseWebhookEnvelopes(body []byte) []inboundEnvelope {
+func fetchUserIDFromAccountEndpoint(beamURL string) int64 {
+	resp, err := beamHTTPClient.Get(beamURL + "/api/account/user-id")
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return 0
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0
+	}
+	var result struct {
+		UserID int64 `json:"userId"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return 0
+	}
+	return result.UserID
+}
+
+func fetchUserIDFromPayloads(beamURL, direction, field string) int64 {
+	resp, err := beamHTTPClient.Get(beamURL + "/api/payloads?direction=" + direction + "&limit=1")
+	if err != nil {
+		return 0
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0
+	}
+	var payloads []map[string]json.RawMessage
+	if err := json.Unmarshal(body, &payloads); err != nil || len(payloads) == 0 {
+		return 0
+	}
+	var id int64
+	if err := json.Unmarshal(payloads[0][field], &id); err != nil {
+		return 0
+	}
+	return id
+}
+
+// WebhookEnvelope pairs a decoded Envelope with the user ID of whoever sent it
+// (0 if the packet came from a workspace broadcast rather than a direct user).
+type WebhookEnvelope struct {
+	Envelope     *rpcpb.Envelope
+	SourceUserID int64
+}
+
+// parseWebhookEnvelopesWithSender extracts Envelope protos from a Beam webhook
+// POST body and includes the sender's userAccountId when present.
+func parseWebhookEnvelopesWithSender(body []byte) []*WebhookEnvelope {
 	var data struct {
 		Payloads []struct {
+			// Legacy fields — not currently emitted by Beam but kept for compatibility.
+			SenderUserAccountId int64  `json:"senderUserAccountId"`
+			SenderId            string `json:"senderId"`
+			// Beam emits the sender under account.id.
 			Account struct {
 				ID string `json:"id"`
 			} `json:"account"`
@@ -125,9 +189,21 @@ func parseWebhookEnvelopes(body []byte) []inboundEnvelope {
 		return nil
 	}
 
-	var out []inboundEnvelope
+	var out []*WebhookEnvelope
 	for _, p := range data.Payloads {
-		sourceUserID, _ := strconv.ParseInt(p.Account.ID, 10, 64)
+		var sourceUserID int64
+		if p.SenderUserAccountId != 0 {
+			sourceUserID = p.SenderUserAccountId
+		} else if p.SenderId != "" {
+			if id, err := strconv.ParseInt(p.SenderId, 10, 64); err == nil {
+				sourceUserID = id
+			}
+		} else if p.Account.ID != "" {
+			if id, err := strconv.ParseInt(p.Account.ID, 10, 64); err == nil {
+				sourceUserID = id
+			}
+		}
+
 		for _, event := range p.Events {
 			if event.Type != "Data" {
 				continue
@@ -141,14 +217,18 @@ func parseWebhookEnvelopes(body []byte) []inboundEnvelope {
 				fmt.Printf("  Ignoring non-RPC IPv4Datagram (namespace=%q)\n", env.Namespace)
 				continue
 			}
-			packageSentAt, _ := time.Parse(time.RFC3339, event.Timestamp)
-			out = append(out, inboundEnvelope{
-				envelope:      env,
-				sourceUserID:  sourceUserID,
-				packageSentAt: packageSentAt,
-				receivedAt:    time.Now(),
-			})
+			out = append(out, &WebhookEnvelope{Envelope: env, SourceUserID: sourceUserID})
 		}
+	}
+	return out
+}
+
+// parseWebhookEnvelopes extracts only the Envelope protos, discarding sender metadata.
+func parseWebhookEnvelopes(body []byte) []*rpcpb.Envelope {
+	wes := parseWebhookEnvelopesWithSender(body)
+	out := make([]*rpcpb.Envelope, len(wes))
+	for i, we := range wes {
+		out[i] = we.Envelope
 	}
 	return out
 }
