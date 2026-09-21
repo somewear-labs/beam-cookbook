@@ -1,0 +1,100 @@
+{
+  "name": "beam-ops",
+  "version": "1.0.0",
+  "description": "Tactical operations application for Beam sensor network",
+  "main": "./out/main/index.js",
+  "author": "Somewear Labs",
+  "homepage": ".",
+  "scripts": {
+    "dev": "pkill -f 'electron-vite dev'; pkill -f 'out/main/index.js'; electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "tiles:create": "node scripts/create-tiles.mjs",
+    "package:mac": "electron-vite build && electron-builder --mac",
+    "package:linux": "electron-vite build && electron-builder --linux",
+    "package": "electron-vite build && electron-builder --mac --linux"
+  },
+  "build": {
+    "appId": "com.somewearlabs.beamops",
+    "productName": "Beam Ops",
+    "afterPack": "./scripts/after-pack.mjs",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "out/**/*"
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "category": "public.app-category.utilities",
+      "artifactName": "${name}_${os}_${arch}.${ext}",
+      "extraResources": [
+        {
+          "from": "../beam-cookbook/rpc/bin",
+          "to": "beam-cookbook/rpc/bin",
+          "filter": ["rpc_darwin_*"]
+        }
+      ]
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "category": "Utility",
+      "artifactName": "${name}_${os}_${arch}.${ext}",
+      "extraResources": [
+        {
+          "from": "../beam-cookbook/rpc/bin",
+          "to": "beam-cookbook/rpc/bin",
+          "filter": ["rpc_linux_*"]
+        }
+      ]
+    }
+  },
+  "dependencies": {
+    "@electron-toolkit/utils": "^3.0.0",
+    "cors": "^2.8.5",
+    "express": "^4.18.3",
+    "maplibre-gl": "^4.1.2",
+    "protobufjs": "^8.8.0",
+    "sql.js": "^1.12.0"
+  },
+  "devDependencies": {
+    "@electron-toolkit/eslint-config-ts": "^2.0.0",
+    "@electron-toolkit/tsconfig": "^1.0.1",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.11.5",
+    "@types/react": "^18.2.55",
+    "@types/react-dom": "^18.2.18",
+    "@vitejs/plugin-react": "^4.2.1",
+    "electron": "^29.4.6",
+    "electron-builder": "^24.13.3",
+    "electron-vite": "^2.0.0",
+    "playwright-core": "^1.62.1",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "typescript": "^5.3.3",
+    "vite": "^5.0.12"
+  },
+  "allowScripts": {
+    "electron@29.4.6": true,
+    "esbuild@0.21.5": true,
+    "fsevents@2.3.3": true,
+    "lzma-native@8.0.6": true
+  }
+}
