@@ -1,11 +1,10 @@
 // cbrn simulates a Joint Chemical Agent Detector (JCAD) / CBRN standoff
 // detector node at a forward operating position.
 //
-// Wire format: SWL header (type=2) + JSON CBRNData
+// Wire format: SWL header (type=2) + protobuf CBRNData
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"math"
@@ -13,28 +12,13 @@ import (
 	"os"
 	"time"
 
+	"google.golang.org/protobuf/proto"
+
+	pb "somewear/sensors/proto"
 	"somewear/sensors/shared"
 )
 
 const sensorType byte = 2
-
-// CBRNData is one reading from the simulated CBRN detector node.
-type CBRNData struct {
-	Timestamp      int64   `json:"timestamp_ms"`
-	NodeID         string  `json:"node_id"`
-	RadiationMRadH float64 `json:"radiation_mrad_hr"`   // background ~0.01–0.02; alert >10
-	ChemAgent      string  `json:"chem_agent"`          // NONE | GA | GB | VX | HD | CG | AC
-	ChemConcentPPB float64 `json:"chem_concent_ppb"`    // 0 when NONE
-	BioIndicator   bool    `json:"bio_indicator"`       // positive aerosol trigger
-	ToxIndustrial  bool    `json:"tox_industrial"`      // TIC detected above threshold
-	ThreatLevel    string  `json:"threat_level"`        // GREEN | YELLOW | RED | BLACK
-	ConfidencePct  int     `json:"confidence_pct"`
-	WindDirDeg     float64 `json:"wind_dir_deg"`        // upwind bearing for source estimation
-	TempC          float64 `json:"temperature_c"`
-	HumidityPct    float64 `json:"humidity_pct"`
-	AlarmActive    bool    `json:"alarm_active"`
-	EventID        string  `json:"event_id,omitempty"`
-}
 
 // Chemical agent names and typical action levels (ppb)
 var agents = []struct {
@@ -96,7 +80,7 @@ func threatLevel(radiation float64, chemAgent string, bio, tic bool, chemConc fl
 	return "GREEN", false
 }
 
-func generateReading() CBRNData {
+func generateReading() *pb.CBRNData {
 	now := time.Now()
 
 	// Wind drift
@@ -146,21 +130,21 @@ func generateReading() CBRNData {
 
 	level, alarm := threatLevel(radiation, chemAgent, bio, tic, chemConc)
 
-	return CBRNData{
-		Timestamp:      now.UnixMilli(),
-		NodeID:         nodeID,
-		RadiationMRadH: math.Round(radiation*1000) / 1000,
-		ChemAgent:      chemAgent,
-		ChemConcentPPB: math.Round(chemConc*1000) / 1000,
-		BioIndicator:   bio,
-		ToxIndustrial:  tic,
-		ThreatLevel:    level,
-		ConfidencePct:  confidence,
-		WindDirDeg:     math.Round(windDir*10) / 10,
-		TempC:          math.Round(tempC*10) / 10,
-		HumidityPct:    math.Round(humidity*10) / 10,
-		AlarmActive:    alarm,
-		EventID:        eventID,
+	return &pb.CBRNData{
+		TimestampMs:     now.UnixMilli(),
+		NodeId:          nodeID,
+		RadiationMradHr: float32(math.Round(radiation*1000) / 1000),
+		ChemAgent:       chemAgent,
+		ChemConcentPpb:  float32(math.Round(chemConc*1000) / 1000),
+		BioIndicator:    bio,
+		ToxIndustrial:   tic,
+		ThreatLevel:     level,
+		ConfidencePct:   int32(confidence),
+		WindDirDeg:      float32(math.Round(windDir*10) / 10),
+		TemperatureC:    float32(math.Round(tempC*10) / 10),
+		HumidityPct:     float32(math.Round(humidity*10) / 10),
+		AlarmActive:     alarm,
+		EventId:         eventID,
 	}
 }
 
@@ -172,13 +156,14 @@ func run(beamURL string, workspaceID int, interval time.Duration, verbose bool) 
 	for range ticker.C {
 		d := generateReading()
 
-		raw, err := json.Marshal(d)
+		raw, err := proto.Marshal(d)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[cbrn] marshal error: %v\n", err)
 			continue
 		}
 		if verbose {
-			fmt.Printf("[cbrn] payload: %s\n", raw)
+			fmt.Printf("[cbrn] payload: node=%s threat=%s rad=%.3f_mR/hr agent=%s conc=%.4fppb alarm=%v\n",
+				d.NodeId, d.ThreatLevel, d.RadiationMradHr, d.ChemAgent, d.ChemConcentPpb, d.AlarmActive)
 		}
 
 		b64, err := shared.WrapSensorPayload(sensorType, raw)
@@ -194,11 +179,11 @@ func run(beamURL string, workspaceID int, interval time.Duration, verbose bool) 
 
 		alarmStr := ""
 		if d.AlarmActive {
-			alarmStr = fmt.Sprintf(" *** ALARM agent=%s conc=%.4fppb conf=%d%%", d.ChemAgent, d.ChemConcentPPB, d.ConfidencePct)
+			alarmStr = fmt.Sprintf(" *** ALARM agent=%s conc=%.4fppb conf=%d%%", d.ChemAgent, d.ChemConcentPpb, d.ConfidencePct)
 		}
 		fmt.Printf("[cbrn] %s node=%s rad=%.3f_mR/hr threat=%s%s\n",
 			time.Now().UTC().Format(time.RFC3339),
-			d.NodeID, d.RadiationMRadH, d.ThreatLevel, alarmStr)
+			d.NodeId, d.RadiationMradHr, d.ThreatLevel, alarmStr)
 	}
 }
 

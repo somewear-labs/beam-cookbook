@@ -1,12 +1,10 @@
 // tws simulates a Tactical Weather Station (TWS) supporting ground and aviation
 // operations at the National Training Center (NTC), Fort Irwin, CA.
 //
-// Wire format: raw JSON TacticalWeather — NO SWL header.
-// The base64 payload encodes the raw JSON bytes directly.
+// Wire format: SWL header (type=3) + protobuf TacticalWeather
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"math"
@@ -14,30 +12,11 @@ import (
 	"os"
 	"time"
 
+	"google.golang.org/protobuf/proto"
+
+	pb "somewear/sensors/proto"
 	"somewear/sensors/shared"
 )
-
-// TacticalWeather is one report from the simulated tactical weather station.
-type TacticalWeather struct {
-	StationID       string  `json:"station_id"`
-	Timestamp       string  `json:"timestamp"`            // RFC3339
-	TemperatureC    float64 `json:"temperature_c"`
-	DewPointC       float64 `json:"dew_point_c"`
-	HumidityPct     float64 `json:"humidity_pct"`
-	PressureHPa     float64 `json:"pressure_hpa"`
-	AltimeterInHg   float64 `json:"altimeter_inhg"`       // for aviation
-	WindSpeedKts    float64 `json:"wind_speed_kts"`
-	WindDirDeg      float64 `json:"wind_direction_deg"`
-	GustKts         float64 `json:"gust_kts"`             // 0 if no gust
-	CrosswindKts    float64 `json:"crosswind_kts"`        // relative to primary runway/LZ
-	VisibilityKM    float64 `json:"visibility_km"`
-	CeilingFt       int     `json:"ceiling_ft"`           // -1 = unlimited
-	Condition       string  `json:"condition"`            // Clear | Haze | Dust | Rain | Fog
-	FlightCat       string  `json:"flight_category"`      // VFR | MVFR | IFR | LIFR
-	DensityAltFt    int     `json:"density_altitude_ft"`
-	DustStorm       bool    `json:"dust_storm_warning"`
-	OperationalNote string  `json:"operational_note"`     // free-text advisory
-}
 
 const stationID = "TWS-BRAVO-001"
 
@@ -124,7 +103,7 @@ func operationalNote(cat string, dustStorm bool, gustKts float64) string {
 	return "Ops normal"
 }
 
-func generateReading() TacticalWeather {
+func generateReading() *pb.TacticalWeather {
 	now := time.Now()
 	hour := float64(now.Hour()) + float64(now.Minute())/60.0
 
@@ -189,46 +168,52 @@ func generateReading() TacticalWeather {
 
 	round1 := func(v float64) float64 { return math.Round(v*10) / 10 }
 
-	return TacticalWeather{
-		StationID:       stationID,
-		Timestamp:       now.UTC().Format(time.RFC3339),
-		TemperatureC:    round1(tempC),
-		DewPointC:       round1(dewPointC),
-		HumidityPct:     round1(humidity),
-		PressureHPa:     round1(pressure),
-		AltimeterInHg:   altimeterInHg,
-		WindSpeedKts:    round1(windSpeedKts),
-		WindDirDeg:      round1(windDir),
-		GustKts:         round1(gustKts),
-		CrosswindKts:    round1(xwind),
-		VisibilityKM:    round1(visKM),
-		CeilingFt:       ceilInt,
-		Condition:       cond,
-		FlightCat:       flightCat,
-		DensityAltFt:    da,
-		DustStorm:       dustEvent,
-		OperationalNote: note,
+	return &pb.TacticalWeather{
+		StationId:         stationID,
+		TimestampMs:       now.UnixMilli(),
+		TemperatureC:      float32(round1(tempC)),
+		DewPointC:         float32(round1(dewPointC)),
+		HumidityPct:       float32(round1(humidity)),
+		PressureHpa:       float32(round1(pressure)),
+		AltimeterInhg:     float32(altimeterInHg),
+		WindSpeedKts:      float32(round1(windSpeedKts)),
+		WindDirectionDeg:  float32(round1(windDir)),
+		GustKts:           float32(round1(gustKts)),
+		CrosswindKts:      float32(round1(xwind)),
+		VisibilityKm:      float32(round1(visKM)),
+		CeilingFt:         int32(ceilInt),
+		Condition:         cond,
+		FlightCategory:    flightCat,
+		DensityAltitudeFt: int32(da),
+		DustStormWarning:  dustEvent,
+		OperationalNote:   note,
 	}
 }
 
 func run(beamURL string, workspaceID int, interval time.Duration, verbose bool) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	fmt.Printf("[tws] station=%s interval=%s (raw JSON, no SWL header)\n", stationID, interval)
+	fmt.Printf("[tws] station=%s interval=%s (protobuf, SWL type=3)\n", stationID, interval)
 
 	for range ticker.C {
 		d := generateReading()
 
-		raw, err := json.Marshal(d)
+		raw, err := proto.Marshal(d)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[tws] marshal error: %v\n", err)
 			continue
 		}
 		if verbose {
-			fmt.Printf("[tws] payload: %s\n", raw)
+			fmt.Printf("[tws] station=%s %.0f°@%.0fkts gust=%.0f vis=%.1fkm %s DA=%dft\n",
+				d.StationId, d.WindDirectionDeg, d.WindSpeedKts, d.GustKts,
+				d.VisibilityKm, d.FlightCategory, d.DensityAltitudeFt)
 		}
 
-		b64 := shared.WrapRawPayload(raw)
+		b64, err := shared.WrapSensorPayload(3, raw)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[tws] wrap error: %v\n", err)
+			continue
+		}
 
 		if err := shared.SendIPv4(beamURL, workspaceID, b64); err != nil {
 			fmt.Fprintf(os.Stderr, "[tws] send error: %v\n", err)
@@ -236,13 +221,13 @@ func run(beamURL string, workspaceID int, interval time.Duration, verbose bool) 
 		}
 
 		dustWarn := ""
-		if d.DustStorm {
+		if d.DustStormWarning {
 			dustWarn = " DUST_STORM"
 		}
 		fmt.Printf("[tws] %s station=%s %.0f°@%.0fkts gust=%.0f vis=%.1fkm %s DA=%dft%s\n",
 			time.Now().UTC().Format(time.RFC3339),
-			d.StationID, d.WindDirDeg, d.WindSpeedKts, d.GustKts,
-			d.VisibilityKM, d.FlightCat, d.DensityAltFt, dustWarn)
+			d.StationId, d.WindDirectionDeg, d.WindSpeedKts, d.GustKts,
+			d.VisibilityKm, d.FlightCategory, d.DensityAltitudeFt, dustWarn)
 	}
 }
 

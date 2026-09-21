@@ -1,11 +1,10 @@
 // vimu simulates a Vehicle Inertial Measurement Unit (V-IMU) mounted on an
 // M1A2 SEPv3 Abrams MBT at the National Training Center (NTC), Fort Irwin, CA.
 //
-// Wire format: SWL header (type=4) + JSON VehicleIMUData
+// Wire format: SWL header (type=4) + protobuf VehicleIMUData
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"math"
@@ -13,33 +12,13 @@ import (
 	"os"
 	"time"
 
+	"google.golang.org/protobuf/proto"
+
+	pb "somewear/sensors/proto"
 	"somewear/sensors/shared"
 )
 
 const sensorType byte = 4
-
-// VehicleIMUData is one burst from the V-IMU.
-type VehicleIMUData struct {
-	Timestamp   int64   `json:"timestamp_ms"`
-	VehicleID   string  `json:"vehicle_id"`    // callsign / bumper number
-	UnitID      string  `json:"unit_id"`       // e.g. "A/3-8 CAV"
-	AccelX      float64 `json:"accel_x"`       // m/s² — longitudinal (positive forward)
-	AccelY      float64 `json:"accel_y"`       // m/s² — lateral (positive right)
-	AccelZ      float64 `json:"accel_z"`       // m/s² — vertical (positive up, ~9.81 static)
-	GyroX       float64 `json:"gyro_x"`        // rad/s — roll rate
-	GyroY       float64 `json:"gyro_y"`        // rad/s — pitch rate
-	GyroZ       float64 `json:"gyro_z"`        // rad/s — yaw rate
-	MagX        float64 `json:"mag_x"`         // µT
-	MagY        float64 `json:"mag_y"`         // µT
-	MagZ        float64 `json:"mag_z"`         // µT
-	Roll        float64 `json:"roll_deg"`
-	Pitch       float64 `json:"pitch_deg"`
-	Heading     float64 `json:"heading_deg"`   // magnetic heading
-	SpeedMPS    float64 `json:"speed_mps"`     // estimated ground speed
-	GForcePeak  float64 `json:"g_force_peak"`  // peak G this interval
-	MotionState string  `json:"motion_state"`  // STATIONARY | MOVING | MANEUVERING | FIRING
-	TempC       float64 `json:"temperature_c"` // IMU housing temp
-}
 
 const (
 	vehicleID = "A-31"       // Alpha Company, 3rd Platoon, 1st vehicle
@@ -107,7 +86,7 @@ func updateState() {
 	}
 }
 
-func generateReading() VehicleIMUData {
+func generateReading() *pb.VehicleIMUData {
 	updateState()
 
 	var targetSpeed float64
@@ -189,26 +168,26 @@ func generateReading() VehicleIMUData {
 
 	round2 := func(v float64) float64 { return math.Round(v*100) / 100 }
 
-	return VehicleIMUData{
-		Timestamp:   time.Now().UnixMilli(),
-		VehicleID:   vehicleID,
-		UnitID:      unitID,
-		AccelX:      round2(ax),
-		AccelY:      round2(ay),
-		AccelZ:      round2(az),
-		GyroX:       round2(gx),
-		GyroY:       round2(gy),
-		GyroZ:       round2(gz),
-		MagX:        round2(mx),
-		MagY:        round2(my),
-		MagZ:        round2(mz),
-		Roll:        math.Round(roll*10) / 10,
-		Pitch:       math.Round(pitch*10) / 10,
-		Heading:     math.Round(heading*10) / 10,
-		SpeedMPS:    math.Round(speed*100) / 100,
-		GForcePeak:  gForcePeak,
-		MotionState: state,
-		TempC:       math.Round(tempC*10) / 10,
+	return &pb.VehicleIMUData{
+		TimestampMs:  time.Now().UnixMilli(),
+		VehicleId:    vehicleID,
+		UnitId:       unitID,
+		AccelX:       float32(round2(ax)),
+		AccelY:       float32(round2(ay)),
+		AccelZ:       float32(round2(az)),
+		GyroX:        float32(round2(gx)),
+		GyroY:        float32(round2(gy)),
+		GyroZ:        float32(round2(gz)),
+		MagX:         float32(round2(mx)),
+		MagY:         float32(round2(my)),
+		MagZ:         float32(round2(mz)),
+		RollDeg:      float32(math.Round(roll*10) / 10),
+		PitchDeg:     float32(math.Round(pitch*10) / 10),
+		HeadingDeg:   float32(math.Round(heading*10) / 10),
+		SpeedMps:     float32(math.Round(speed*100) / 100),
+		GForcePeak:   float32(gForcePeak),
+		MotionState:  state,
+		TemperatureC: float32(math.Round(tempC*10) / 10),
 	}
 }
 
@@ -220,13 +199,14 @@ func run(beamURL string, workspaceID int, interval time.Duration, verbose bool) 
 	for range ticker.C {
 		d := generateReading()
 
-		raw, err := json.Marshal(d)
+		raw, err := proto.Marshal(d)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[vimu] marshal error: %v\n", err)
 			continue
 		}
 		if verbose {
-			fmt.Printf("[vimu] payload: %s\n", raw)
+			fmt.Printf("[vimu] vehicle=%s hdg=%.0f° speed=%.1fm/s state=%s g=%.2f tempC=%.1f\n",
+				d.VehicleId, d.HeadingDeg, d.SpeedMps, d.MotionState, d.GForcePeak, d.TemperatureC)
 		}
 
 		b64, err := shared.WrapSensorPayload(sensorType, raw)
@@ -242,7 +222,7 @@ func run(beamURL string, workspaceID int, interval time.Duration, verbose bool) 
 
 		fmt.Printf("[vimu] %s vehicle=%s hdg=%.0f° speed=%.1fm/s state=%s g=%.2f\n",
 			time.Now().UTC().Format(time.RFC3339),
-			d.VehicleID, d.Heading, d.SpeedMPS, d.MotionState, d.GForcePeak)
+			d.VehicleId, d.HeadingDeg, d.SpeedMps, d.MotionState, d.GForcePeak)
 	}
 }
 

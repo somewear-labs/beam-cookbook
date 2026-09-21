@@ -11,7 +11,7 @@ import (
 
 const (
 	DefaultBeamURL     = "http://localhost:9091"
-	DefaultWorkspaceID = 39054
+	DefaultWorkspaceID = 76854
 
 	// SWL magic bytes that prefix every sensor frame (except weather, which is raw JSON).
 	swlMagic0 = 'S'

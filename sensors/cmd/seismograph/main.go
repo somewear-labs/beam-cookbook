@@ -1,12 +1,12 @@
-// ugs simulates an Unattended Ground Sensor (UGS) at the National Training
-// Center (NTC), Fort Irwin, CA. UGS nodes detect seismic-acoustic signatures
-// of vehicles, dismounted personnel, and explosions.
+// seismograph simulates a broadband seismometer near Ridgecrest, CA.
+// Generates realistic vehicle-passage events (heavy machinery / tanks) with a
+// multi-phase envelope: quiet → approach (build-up) → pass-by (peak) → recede (fade).
+// Between events the station records low-amplitude ambient microseismic noise.
 //
-// Wire format: SWL header (type=1) + JSON UGSData
+// Wire format: SWL header (type=5) + protobuf SeismicData
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"math"
@@ -14,42 +14,52 @@ import (
 	"os"
 	"time"
 
+	"google.golang.org/protobuf/proto"
+
+	pb "somewear/sensors/proto"
 	"somewear/sensors/shared"
 )
 
-const sensorType byte = 1
+const sensorType byte = 5
 
-// UGSData is one transmission from a simulated UGS node.
-// Each burst carries 10 seismic-acoustic samples at 100 sps.
-type UGSData struct {
-	Timestamp     int64     `json:"timestamp_ms"`
-	NodeID        string    `json:"node_id"`
-	Latitude      float64   `json:"latitude"`
-	Longitude     float64   `json:"longitude"`
-	AltitudeM     float64   `json:"altitude_m"`
-	SeismicE      []float64 `json:"seismic_e"`           // East channel, m/s²
-	SeismicN      []float64 `json:"seismic_n"`           // North channel, m/s²
-	SeismicZ      []float64 `json:"seismic_z"`           // Vertical channel, m/s²
-	SampleRateHz  int       `json:"sample_rate_hz"`      // always 100
-	PeakAmplitude float64   `json:"peak_amplitude"`      // m/s²
-	ThreatType    string    `json:"threat_type"`         // NONE | PERSONNEL | VEHICLE | EXPLOSION
-	ConfidencePct int       `json:"confidence_pct"`      // 0–100
-	BearingDeg    float64   `json:"bearing_deg"`         // estimated bearing to contact
-	RangeM        float64   `json:"estimated_range_m"`   // estimated distance to contact
-	EventID       string    `json:"event_id,omitempty"`  // set when a contact is detected
-}
-
-// NTC Goldstone area — typical OPFOR maneuver corridor
 const (
-	nodeID   = "UGS-ALPHA-001"
-	nodeLat  = 35.2627
-	nodeLon  = -116.6835
-	nodeAlt  = 914.0 // metres above sea level
-
-	noiseFloor = 2e-7 // m/s² ambient micro-seismic floor at NTC
+	stationID  = "RCOE"
+	netCode    = "CI"
+	noiseFloor = 1e-9 // m/s ambient microseismic baseline
+	sampleRate = 100  // Hz
+	burstLen   = 10   // samples per burst
 )
 
-var eventCounter int
+// vehiclePhase tracks where in the passage arc the current event is.
+type vehiclePhase int
+
+const (
+	phaseApproach vehiclePhase = iota // amplitude building as vehicle closes
+	phasePassBy                       // at closest point, maximum amplitude
+	phaseRecede                       // amplitude falling as vehicle departs
+)
+
+// vehicleEvent holds all state for an ongoing vehicle passage.
+// Phase accumulators (groundPhase, treadPhase, enginePhase) advance each burst
+// so the waveform stays coherent across intervals instead of resetting.
+type vehicleEvent struct {
+	phase        vehiclePhase
+	stepsLeft    int
+	totalSteps   int
+	peakAmp      float64 // PGV at closest approach, m/s
+	groundRollHz float64 // low-frequency ground roll (1.5–4 Hz)
+	treadHz      float64 // tread-impact repetition rate (12–22 Hz)
+	engineHz     float64 // engine dominant harmonic (18–30 Hz)
+	eventID      string
+	groundPhase  float64
+	treadPhase   float64
+	enginePhase  float64
+}
+
+var (
+	activeEvent    *vehicleEvent
+	vehicleCounter int
+)
 
 func randn(mean, sigma float64) float64 {
 	u1 := 1.0 - rand.Float64()
@@ -58,216 +68,250 @@ func randn(mean, sigma float64) float64 {
 	return mean + sigma*z
 }
 
-// ambientNoise generates 10 background samples — desert micro-seismic + wind.
-func ambientNoise() []float64 {
-	out := make([]float64, 10)
+// ambientNoise generates low-level background microseismic samples.
+func ambientNoise(n int) []float64 {
+	out := make([]float64, n)
 	for i := range out {
-		micro := noiseFloor * (1.0 + rand.Float64()*4.0) * math.Sin(2*math.Pi*0.05*float64(i)/100.0)
-		hf := randn(0, noiseFloor*0.5)
-		out[i] = micro + hf
+		t := float64(i) / sampleRate
+		micro := noiseFloor * 3 * math.Sin(2*math.Pi*0.15*t)
+		out[i] = micro + randn(0, noiseFloor*1.5)
 	}
 	return out
 }
 
-// vehicleSignature generates a seismic signature typical of a tracked vehicle
-// (M1 Abrams / BMP): rhythmic 15–25 Hz tread pattern with strong ground coupling.
-func vehicleSignature(amp float64) []float64 {
-	out := make([]float64, 10)
-	for i := range out {
-		t := float64(i) / 100.0
-		// Tread fundamental ~18 Hz + harmonic at 36 Hz
-		tread := amp * 0.85 * math.Sin(2*math.Pi*18*t)
-		tread += amp * 0.35 * math.Sin(2*math.Pi*36*t)
-		// Engine vibration envelope
-		eng := amp * 0.4 * math.Sin(2*math.Pi*9*t) * math.Exp(-t*2)
-		noise := randn(0, noiseFloor*2)
-		out[i] = tread + eng + noise
+// vehicleWaveform synthesises the three-channel seismic signature of heavy machinery.
+// The waveform has three components:
+//   - ground roll: low-frequency body wave from vehicle mass (~2–4 Hz)
+//   - tread impact: repetitive mid-frequency impulse from track/tyre contact (~12–22 Hz)
+//   - engine harmonic: higher-frequency drivetrain coupling (~18–30 Hz)
+//
+// Phase accumulators on ev advance so consecutive bursts are phase-continuous.
+func vehicleWaveform(ev *vehicleEvent, amp float64, n int) (z, north, east []float64) {
+	z = make([]float64, n)
+	north = make([]float64, n)
+	east = make([]float64, n)
+
+	dt := 1.0 / sampleRate
+	gp := ev.groundPhase
+	tp := ev.treadPhase
+	ep := ev.enginePhase
+	dg := 2 * math.Pi * ev.groundRollHz * dt
+	dt2 := 2 * math.Pi * ev.treadHz * dt
+	de := 2 * math.Pi * ev.engineHz * dt
+
+	for i := range z {
+		groundRoll := amp * 0.45 * math.Sin(gp)
+
+		// Tread impact: soft-clip to give it an impulsive, non-sinusoidal shape
+		treadLinear := amp * math.Sin(tp)
+		tread := math.Tanh(treadLinear/(amp*0.65)) * amp * 0.65
+
+		engine := amp * 0.28 * math.Sin(ep)
+
+		// Z: vertical bounce from tread + ground roll
+		z[i] = tread*0.95 + groundRoll*0.75 + randn(0, amp*0.04)
+		// N: direction of travel — engine + ground roll
+		north[i] = engine*0.85 + groundRoll*0.55 + randn(0, amp*0.04)
+		// E: cross-track — tread slap + engine coupling
+		east[i] = tread*0.55 + engine*0.45 + randn(0, amp*0.05)
+
+		gp += dg
+		tp += dt2
+		ep += de
+	}
+
+	ev.groundPhase = gp
+	ev.treadPhase = tp
+	ev.enginePhase = ep
+	return z, north, east
+}
+
+func newVehicleEvent() *vehicleEvent {
+	vehicleCounter++
+	approachSteps := 5 + rand.Intn(5) // 5–9 intervals of build-up (~25–45 s)
+	return &vehicleEvent{
+		phase:        phaseApproach,
+		stepsLeft:    approachSteps,
+		totalSteps:   approachSteps,
+		peakAmp:      2e-5 + rand.Float64()*3e-4, // 2e-5 to 3.2e-4 m/s
+		groundRollHz: 1.5 + rand.Float64()*2.5,
+		treadHz:      12.0 + rand.Float64()*10.0,
+		engineHz:     18.0 + rand.Float64()*12.0,
+		eventID:      fmt.Sprintf("VEH-%s-%04d", time.Now().Format("20060102"), vehicleCounter),
+		groundPhase:  rand.Float64() * 2 * math.Pi,
+		treadPhase:   rand.Float64() * 2 * math.Pi,
+		enginePhase:  rand.Float64() * 2 * math.Pi,
+	}
+}
+
+// mmIntensity converts PGV (m/s) to Modified Mercalli Intensity (Wald et al. 1999).
+func mmIntensity(pgv float64) int {
+	switch {
+	case pgv >= 1.2:
+		return 10
+	case pgv >= 0.50:
+		return 9
+	case pgv >= 0.20:
+		return 8
+	case pgv >= 0.05:
+		return 7
+	case pgv >= 0.01:
+		return 6
+	case pgv >= 0.005:
+		return 5
+	case pgv >= 0.002:
+		return 4
+	case pgv >= 0.001:
+		return 3
+	case pgv >= 0.0001:
+		return 2
+	default:
+		return 1
+	}
+}
+
+// toFloat32s converts a []float64 slice to []float32 for protobuf repeated float fields.
+func toFloat32s(in []float64) []float32 {
+	out := make([]float32, len(in))
+	for i, v := range in {
+		out[i] = float32(v)
 	}
 	return out
 }
 
-// personnelSignature generates a low-amplitude, irregular signature of a
-// dismounted squad: footfall ~1.5–2.5 Hz with spread variance.
-func personnelSignature(amp float64) []float64 {
-	out := make([]float64, 10)
-	for i := range out {
-		t := float64(i) / 100.0
-		step := amp * math.Sin(2*math.Pi*(1.8+randn(0, 0.2))*t)
-		// Inter-person interference
-		step += amp * 0.3 * math.Sin(2*math.Pi*(2.1+randn(0, 0.15))*t+0.6)
-		noise := randn(0, noiseFloor*3)
-		out[i] = step + noise
-	}
-	return out
-}
+func generateReading() (*pb.SeismicData, string) {
+	now := time.Now()
 
-// explosionSignature generates an impulsive signature: sharp P-wave onset
-// followed by Rayleigh surface-wave coda.
-func explosionSignature(amp float64) []float64 {
-	out := make([]float64, 10)
-	for i := range out {
-		t := float64(i) / 100.0
-		// Impulsive onset
-		impEnv := math.Exp(-t * 40)
-		imp := amp * impEnv * math.Sin(2*math.Pi*30*t)
-		// Slower Rayleigh coda
-		codaDelay := 0.02
-		codaT := t - codaDelay
-		coda := 0.0
-		if codaT > 0 {
-			coda = amp * 0.6 * math.Exp(-codaT*8) * math.Sin(2*math.Pi*8*codaT)
+	// 8% chance per quiet interval of a vehicle passage beginning
+	if activeEvent == nil && rand.Float64() < 0.08 {
+		activeEvent = newVehicleEvent()
+	}
+
+	var bhz, bhn, bhe []float64
+	var eventID, phaseLabel string
+
+	if activeEvent != nil {
+		ev := activeEvent
+		var amp float64
+
+		switch ev.phase {
+		case phaseApproach:
+			// Linear ramp: starts at 5% of peak, climbs to ~90%
+			progress := 1.0 - float64(ev.stepsLeft)/float64(ev.totalSteps)
+			amp = ev.peakAmp * (0.05 + progress*0.85)
+			phaseLabel = "approach"
+
+		case phasePassBy:
+			// Peak amplitude with slight variation
+			amp = ev.peakAmp * (0.92 + rand.Float64()*0.10)
+			phaseLabel = "pass-by"
+
+		case phaseRecede:
+			// Exponential-ish decay back toward quiet
+			progress := float64(ev.stepsLeft) / float64(ev.totalSteps)
+			amp = ev.peakAmp * (0.04 + progress*0.86)
+			phaseLabel = "recede"
 		}
-		noise := randn(0, noiseFloor)
-		out[i] = imp + coda + noise
-	}
-	return out
-}
 
-func peakAmp(e, n, z []float64) float64 {
-	peak := 0.0
-	for i := range e {
-		for _, v := range []float64{math.Abs(e[i]), math.Abs(n[i]), math.Abs(z[i])} {
-			if v > peak {
-				peak = v
+		bhz, bhn, bhe = vehicleWaveform(ev, amp, burstLen)
+
+		// Ambient noise rides underneath — negligible vs. vehicle amplitude
+		amb := ambientNoise(burstLen)
+		for i := range bhz {
+			bhz[i] += amb[i]
+			bhn[i] += amb[i] * 0.5
+			bhe[i] += amb[i] * 0.5
+		}
+
+		eventID = ev.eventID
+
+		// Advance state machine
+		ev.stepsLeft--
+		if ev.stepsLeft <= 0 {
+			switch ev.phase {
+			case phaseApproach:
+				passSteps := 2 + rand.Intn(2) // 2–3 intervals at peak
+				ev.phase = phasePassBy
+				ev.stepsLeft = passSteps
+				ev.totalSteps = passSteps
+			case phasePassBy:
+				recedeSteps := 5 + rand.Intn(5) // 5–9 intervals fading
+				ev.phase = phaseRecede
+				ev.stepsLeft = recedeSteps
+				ev.totalSteps = recedeSteps
+			case phaseRecede:
+				activeEvent = nil
+				phaseLabel = "complete"
+			}
+		}
+	} else {
+		bhz = ambientNoise(burstLen)
+		bhn = ambientNoise(burstLen)
+		bhe = ambientNoise(burstLen)
+	}
+
+	pgv := 0.0
+	for i := range bhz {
+		for _, v := range []float64{math.Abs(bhz[i]), math.Abs(bhn[i]), math.Abs(bhe[i])} {
+			if v > pgv {
+				pgv = v
 			}
 		}
 	}
-	return peak
-}
 
-type contactParams struct {
-	threatType string
-	amp        float64
-	confidence int
-}
-
-func randomContact() contactParams {
-	r := rand.Float64()
-	switch {
-	case r < 0.50:
-		// Vehicle (most common threat at NTC)
-		amp := 0.002 + rand.Float64()*0.018 // 2–20 mm/s²
-		return contactParams{"VEHICLE", amp, 75 + rand.Intn(25)}
-	case r < 0.80:
-		// Dismounted personnel
-		amp := 0.0002 + rand.Float64()*0.0008 // 0.2–1.0 mm/s²
-		return contactParams{"PERSONNEL", amp, 55 + rand.Intn(35)}
-	default:
-		// Explosion
-		amp := 0.05 + rand.Float64()*0.45 // 50–500 mm/s²
-		return contactParams{"EXPLOSION", amp, 90 + rand.Intn(10)}
+	d := &pb.SeismicData{
+		TimestampMs:  now.UnixMilli(),
+		StationId:    stationID,
+		NetworkCode:  netCode,
+		ChannelBhz:   toFloat32s(bhz),
+		ChannelBhn:   toFloat32s(bhn),
+		ChannelBhe:   toFloat32s(bhe),
+		SampleRateHz: int32(sampleRate),
+		PgvMs:        float32(pgv),
+		Intensity:    int32(mmIntensity(pgv)),
+		EventId:      eventID,
 	}
-}
-
-func generateReading() UGSData {
-	now := time.Now()
-
-	var (
-		seisE, seisN, seisZ []float64
-		threat               string = "NONE"
-		confidence           int    = 0
-		bearing              float64
-		rangeM               float64
-		eventID              string
-	)
-
-	// 5% chance of a contact each interval
-	if rand.Float64() < 0.05 {
-		eventCounter++
-		c := randomContact()
-		threat = c.threatType
-		confidence = c.confidence
-		bearing = rand.Float64() * 360
-		// Range inversely proportional to amplitude proxy
-		rangeM = 800 / (1 + c.amp*50)
-		if rangeM < 50 {
-			rangeM = 50
-		}
-		eventID = fmt.Sprintf("TGT-%s-%04d", now.Format("20060102"), eventCounter)
-
-		// Horizontal channels carry most energy for surface targets
-		seisE = vehicleSignature(c.amp * 0.8)
-		seisN = vehicleSignature(c.amp * 0.8)
-		seisZ = vehicleSignature(c.amp * 0.4)
-
-		switch c.threatType {
-		case "PERSONNEL":
-			seisE = personnelSignature(c.amp * 0.7)
-			seisN = personnelSignature(c.amp * 0.7)
-			seisZ = personnelSignature(c.amp * 0.3)
-		case "EXPLOSION":
-			seisE = explosionSignature(c.amp * 0.9)
-			seisN = explosionSignature(c.amp * 0.85)
-			seisZ = explosionSignature(c.amp * 0.7)
-		}
-	} else {
-		seisE = ambientNoise()
-		seisN = ambientNoise()
-		seisZ = ambientNoise()
-	}
-
-	peak := peakAmp(seisE, seisN, seisZ)
-
-	return UGSData{
-		Timestamp:     now.UnixMilli(),
-		NodeID:        nodeID,
-		Latitude:      nodeLat,
-		Longitude:     nodeLon,
-		AltitudeM:     nodeAlt,
-		SeismicE:      seisE,
-		SeismicN:      seisN,
-		SeismicZ:      seisZ,
-		SampleRateHz:  100,
-		PeakAmplitude: peak,
-		ThreatType:    threat,
-		ConfidencePct: confidence,
-		BearingDeg:    bearing,
-		RangeM:        rangeM,
-		EventID:       eventID,
-	}
+	return d, phaseLabel
 }
 
 func run(beamURL string, workspaceID int, interval time.Duration, verbose bool) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	fmt.Printf("[ugs] node=%s lat=%.4f lon=%.4f interval=%s\n",
-		nodeID, nodeLat, nodeLon, interval)
+	fmt.Printf("[seismograph] station=%s.%s interval=%s\n", netCode, stationID, interval)
 
 	for range ticker.C {
-		d := generateReading()
+		d, phaseLabel := generateReading()
 
-		raw, err := json.Marshal(d)
+		raw, err := proto.Marshal(d)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "[ugs] marshal error: %v\n", err)
+			fmt.Fprintf(os.Stderr, "[seismograph] marshal error: %v\n", err)
 			continue
 		}
 		if verbose {
-			fmt.Printf("[ugs] payload: %s\n", raw)
+			fmt.Printf("[seismograph] payload: station=%s.%s ts=%d pgv=%.2e intensity=%d event=%s\n",
+				d.NetworkCode, d.StationId, d.TimestampMs, d.PgvMs, d.Intensity, d.EventId)
 		}
 
 		b64, err := shared.WrapSensorPayload(sensorType, raw)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "[ugs] wrap error: %v\n", err)
+			fmt.Fprintf(os.Stderr, "[seismograph] wrap error: %v\n", err)
 			continue
 		}
 
 		if err := shared.SendIPv4(beamURL, workspaceID, b64); err != nil {
-			fmt.Fprintf(os.Stderr, "[ugs] send error: %v\n", err)
+			fmt.Fprintf(os.Stderr, "[seismograph] send error: %v\n", err)
 			continue
 		}
 
-		contactNote := ""
-		if d.EventID != "" {
-			contactNote = fmt.Sprintf(" %s bearing=%.0f° range=%.0fm conf=%d%%",
-				d.ThreatType, d.BearingDeg, d.RangeM, d.ConfidencePct)
+		eventNote := ""
+		if d.EventId != "" {
+			eventNote = fmt.Sprintf(" EVENT=%s phase=%s", d.EventId, phaseLabel)
 		}
-		fmt.Printf("[ugs] %s node=%s peak=%.2e m/s² threat=%s%s\n",
-			now().UTC().Format(time.RFC3339),
-			d.NodeID, d.PeakAmplitude, d.ThreatType, contactNote)
+		fmt.Printf("[seismograph] %s station=%s.%s pgv=%.2e m/s intensity=%d%s\n",
+			time.Now().UTC().Format(time.RFC3339),
+			d.NetworkCode, d.StationId, d.PgvMs, d.Intensity, eventNote)
 	}
 }
-
-func now() time.Time { return time.Now() }
 
 func main() {
 	url := flag.String("url", shared.DefaultBeamURL, "Beam API URL")

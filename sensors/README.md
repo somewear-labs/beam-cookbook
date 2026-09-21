@@ -1,20 +1,19 @@
-# sensors — Sensor Simulator Suite for Somewear Beam
+# sensors — Military Sensor Simulator Suite for Somewear Beam
 
-Five standalone Go programs that simulate physical sensors and push data through Beam's IPv4Datagram endpoint. Each program runs in a loop, generating realistic synthetic readings and posting them at a configurable interval.
+Five standalone Go programs that simulate military sensors and push data through Beam's IPv4Datagram endpoint. Each program runs in a loop, generating realistic synthetic readings and posting them at a configurable interval.
 
 ## Sensors
 
 | Program | Type byte | Description |
 |---------|-----------|-------------|
-| `seismograph` | 1 | Broadband seismometer near Ridgecrest, CA. Ambient microseismic noise with 1% chance of a synthetic P+S-wave earthquake event per interval. |
-| `airquality` | 2 | Urban air quality monitor. PM2.5, PM10, CO₂, VOC, NO₂, O₃, AQI. Levels follow a diurnal traffic pattern with morning/evening peaks. |
-| `gps` | 3 | Vehicle patrol tracker near Fort Irwin (NTC). Walks a 6-waypoint loop at ~8 m/s with realistic HDOP and satellite counts. |
-| `accelerometer` | 4 | 9-DOF IMU mounted on a patrol vehicle. Gravity decomposition, terrain vibration, slow yaw drift, and calibrated magnetometer values. |
-| `weather` | — | Surface weather station (Mojave Desert). Hot, dry, strong diurnal swing. Sent as **raw JSON with no SWL header** — weather is the one exception. |
+| `ugs` | 1 | Unattended Ground Sensor (UGS) at NTC Fort Irwin. Seismic-acoustic detection of vehicles, dismounted personnel, and explosions with bearing/range estimation. |
+| `cbrn` | 2 | CBRN standoff detector node (JCAD). Chemical agent detection (GA/GB/VX/HD/CG/AC), radiation levels, bio indicators, and threat classification. |
+| `vimu` | 4 | Vehicle IMU on an M1A2 SEPv3 Abrams MBT. 9-axis IMU with motion state (STATIONARY/MOVING/MANEUVERING/FIRING), terrain-induced vibration, and main gun recoil spikes. |
+| `tws` | — | Tactical Weather Station (TWS) supporting ground and aviation ops. NTC desert climate: diurnal temp swing, dust storm events, density altitude, flight category. Sent as **raw JSON with no SWL header**. |
 
 ## Wire format
 
-Every sensor except weather wraps its JSON payload in a 4-byte SWL frame before base64-encoding:
+Every sensor except `tws` wraps its JSON payload in a 4-byte SWL frame before base64-encoding:
 
 ```
 Byte 0: 'S' (0x53)
@@ -29,21 +28,27 @@ The base64 string is sent inside Beam's IPv4Datagram body:
 ```json
 POST /api/package/ipv4/async
 {
-  "workspaceId": 39054,
+  "workspaceId": 76854,
   "ipv4": { "payload": "<base64>" }
 }
 ```
 
-Weather sends the raw JSON bytes as base64 with no SWL header — the receiver identifies it by the absence of the magic bytes.
+`tws` sends the raw JSON bytes as base64 with no SWL header — the receiver identifies it by the absence of the magic bytes.
 
 ## Build
 
 ```bash
-# Build all 5 binaries to bin/
+# Build all 4 binaries to bin/ (host platform)
 make
 
+# Build for Linux/ARM64 (Raspberry Pi)
+make linux-arm64
+
+# Build for Linux/AMD64
+make linux-amd64
+
 # Build a single sensor
-make bin/seismograph
+make bin/ugs
 
 # Remove built binaries
 make clean
@@ -58,42 +63,41 @@ Each binary takes the same flags:
 ```
 --url        string    Beam API URL (default "http://localhost:9091")
 --interval   duration  Posting interval (default 5s)
---workspace  int       Workspace ID (default 39054)
+--workspace  int       Workspace ID (default 76854)
 --verbose    bool      Print full JSON payload before each send
 ```
 
 ### Examples
 
 ```bash
-# Run seismograph against local Beam, posting every 2 seconds
-./bin/seismograph --interval 2s
+# Run UGS against local Beam, posting every 2 seconds
+./bin/ugs --url http://localhost:9091 --workspace 76854 --interval 2s
 
-# Run GPS against a remote Beam
-./bin/gps --url http://192.168.1.100:9091 --workspace 12345
+# Run CBRN detector against a remote Beam
+./bin/cbrn --url http://192.168.1.100:9091 --workspace 76854
 
 # Show full payloads for debugging
-./bin/weather --verbose
+./bin/tws --verbose
 
 # Run everything at once
-for s in bin/*; do $s & done
+for s in bin/*; do $s --url http://localhost:9091 --workspace 76854 & done
 ```
 
 ### Sample output
 
 ```
-[seismograph] 2026-09-17T12:00:00Z station=SWL-NOR-001 pgv=3.14e-08 m/s intensity=1
-[seismograph] 2026-09-17T12:00:05Z station=SWL-NOR-001 pgv=4.21e-07 m/s intensity=1
-[seismograph] 2026-09-17T12:00:10Z station=SWL-NOR-001 pgv=2.18e-03 m/s intensity=4 EVENT=EQ-20260917-0001
+[ugs] 2026-09-17T12:00:00Z node=UGS-ALPHA-001 peak=3.14e-08 m/s² threat=NONE
+[ugs] 2026-09-17T12:00:05Z node=UGS-ALPHA-001 peak=4.21e-03 m/s² threat=VEHICLE bearing=142° range=320m conf=87%
 
-[airquality] 2026-09-17T12:00:00Z sensor=SWL-AQ-001 pm25=9.3 aqi=38 co2=461 temp=23.4°C
+[cbrn] 2026-09-17T12:00:00Z node=CBRN-DET-001 rad=0.015_mR/hr threat=GREEN
+[cbrn] 2026-09-17T12:00:05Z node=CBRN-DET-001 rad=0.018_mR/hr threat=RED *** ALARM agent=GB conc=0.0023ppb conf=91%
 
-[gps] 2026-09-17T12:00:00Z device=SWL-GPS-001 lat=35.268432 lon=-116.701234 speed=8.2 m/s course=312°
+[vimu] 2026-09-17T12:00:00Z vehicle=A-31 hdg=62° speed=9.4m/s state=MOVING g=1.14
+[vimu] 2026-09-17T12:00:05Z vehicle=A-31 hdg=63° speed=0.0m/s state=FIRING g=8.72
 
-[accelerometer] 2026-09-17T12:00:00Z device=SWL-IMU-001 accel=(0.24,-0.13,9.82) m/s² roll=1.2° pitch=1.5° yaw=46.3°
-
-[weather] 2026-09-17T12:00:00Z station=SWL-WX-001 temp=38.4°C humidity=12% wind=4.1 m/s@228° condition=Clear
+[tws] 2026-09-17T12:00:00Z station=TWS-BRAVO-001 270°@8kts gust=0 vis=24.3km VFR DA=4210ft
 ```
 
 ## How Beam sees the data
 
-Beam treats these payloads as opaque IPv4Datagrams and routes them to any registered webhook consumer. A receiver decodes the base64 payload, checks for the `SWL` magic bytes, reads the type byte, then JSON-unmarshals the remaining bytes into the appropriate struct. Weather payloads (no magic) are identified by the absence of the `SWL` prefix.
+Beam treats these payloads as opaque IPv4Datagrams and routes them to any registered webhook consumer. A receiver decodes the base64 payload, checks for the `SWL` magic bytes, reads the type byte, then JSON-unmarshals the remaining bytes into the appropriate struct. `tws` payloads (no magic) are identified by the absence of the `SWL` prefix.

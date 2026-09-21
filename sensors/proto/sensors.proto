@@ -1,0 +1,102 @@
+syntax = "proto3";
+package sensors;
+option go_package = "somewear/sensors/proto";
+
+// UGSData — Unattended Ground Sensor (type byte 1)
+message UGSData {
+  int64          timestamp_ms      = 1;
+  string         node_id           = 2;
+  double         latitude          = 3;
+  double         longitude         = 4;
+  float          altitude_m        = 5;
+  repeated float seismic_e         = 6;   // East channel, m/s²
+  repeated float seismic_n         = 7;   // North channel, m/s²
+  repeated float seismic_z         = 8;   // Vertical channel, m/s²
+  int32          sample_rate_hz    = 9;
+  float          peak_amplitude    = 10;
+  string         threat_type       = 11;  // NONE | PERSONNEL | VEHICLE | EXPLOSION
+  int32          confidence_pct    = 12;
+  float          bearing_deg       = 13;
+  float          estimated_range_m = 14;
+  string         event_id          = 15;
+}
+
+// CBRNData — CBRN standoff detector (type byte 2)
+message CBRNData {
+  int64  timestamp_ms      = 1;
+  string node_id           = 2;
+  float  radiation_mrad_hr = 3;
+  string chem_agent        = 4;   // NONE | GA | GB | VX | HD | CG | AC
+  float  chem_concent_ppb  = 5;
+  bool   bio_indicator     = 6;
+  bool   tox_industrial    = 7;
+  string threat_level      = 8;   // GREEN | YELLOW | RED | BLACK
+  int32  confidence_pct    = 9;
+  float  wind_dir_deg      = 10;
+  float  temperature_c     = 11;
+  float  humidity_pct      = 12;
+  bool   alarm_active      = 13;
+  string event_id          = 14;
+}
+
+// TacticalWeather — weather station (type byte 3)
+message TacticalWeather {
+  string station_id          = 1;
+  int64  timestamp_ms        = 2;
+  float  temperature_c       = 3;
+  float  dew_point_c         = 4;
+  float  humidity_pct        = 5;
+  float  pressure_hpa        = 6;
+  float  altimeter_inhg      = 7;
+  float  wind_speed_kts      = 8;
+  float  wind_direction_deg  = 9;
+  float  gust_kts            = 10;
+  float  crosswind_kts       = 11;
+  float  visibility_km       = 12;
+  int32  ceiling_ft          = 13;
+  string condition           = 14;
+  string flight_category     = 15;
+  int32  density_altitude_ft = 16;
+  bool   dust_storm_warning  = 17;
+  string operational_note    = 18;
+}
+
+// VehicleIMUData — vehicle IMU (type byte 4)
+message VehicleIMUData {
+  int64  timestamp_ms  = 1;
+  string vehicle_id    = 2;
+  string unit_id       = 3;
+  float  accel_x       = 4;
+  float  accel_y       = 5;
+  float  accel_z       = 6;
+  float  gyro_x        = 7;
+  float  gyro_y        = 8;
+  float  gyro_z        = 9;
+  float  mag_x         = 10;
+  float  mag_y         = 11;
+  float  mag_z         = 12;
+  float  roll_deg      = 13;
+  float  pitch_deg     = 14;
+  float  heading_deg   = 15;
+  float  speed_mps     = 16;
+  float  g_force_peak  = 17;
+  string motion_state  = 18;  // STATIONARY | MOVING | MANEUVERING | FIRING
+  float  temperature_c = 19;
+}
+
+// SeismicData — broadband seismometer (type byte 5)
+message SeismicData {
+  int64          timestamp_ms   = 1;
+  string         station_id     = 2;
+  string         network_code   = 3;
+  repeated float channel_bhz   = 4;   // vertical, m/s
+  repeated float channel_bhn   = 5;   // north, m/s
+  repeated float channel_bhe   = 6;   // east, m/s
+  int32          sample_rate_hz = 7;
+  float          pgv_ms         = 8;
+  int32          intensity      = 9;
+  string         event_id       = 10;
+  float          magnitude      = 11;
+  float          depth_km       = 12;
+  float          epicenter_km   = 13;
+}
