@@ -4,8 +4,12 @@ import path from 'path';
 
 // Wire format: bytes 0-2 = 'SWL' magic, byte 3 = sensor type, bytes 4+ = protobuf payload.
 
-const PROJECT_ROOT = path.resolve(app.getAppPath(), '..');
-const SENSORS_PROTO = path.join(PROJECT_ROOT, 'beam-cookbook', 'sensors', 'proto', 'sensors.proto');
+// Dev:      beam-cookbook/examples/beam-ops → ../../ → beam-cookbook root
+// Packaged: Resources/ + beam-cookbook
+const COOKBOOK_ROOT = app.isPackaged
+  ? path.join(path.resolve(app.getAppPath(), '..'), 'beam-cookbook')
+  : path.resolve(app.getAppPath(), '..', '..');
+const SENSORS_PROTO = path.join(COOKBOOK_ROOT, 'sensors', 'proto', 'sensors.proto');
 
 export const SWL_SENSOR_TYPES: Record<number, string> = {
   1: 'UGS',
