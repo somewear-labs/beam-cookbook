@@ -4,8 +4,12 @@ import path from 'path';
 
 // Wire format: bytes 0-2 = 'SWL' magic, byte 3 = sensor type, bytes 4+ = protobuf payload.
 
-const PROJECT_ROOT = path.resolve(app.getAppPath(), '..');
-const SENSORS_PROTO = path.join(PROJECT_ROOT, 'beam-cookbook', 'sensors', 'proto', 'sensors.proto');
+// Dev:      beam-cookbook/examples/beam-ops → ../../ → beam-cookbook root
+// Packaged: Resources/ + beam-cookbook
+const COOKBOOK_ROOT = app.isPackaged
+  ? path.join(path.resolve(app.getAppPath(), '..'), 'beam-cookbook')
+  : path.resolve(app.getAppPath(), '..', '..');
+const SENSORS_PROTO = path.join(COOKBOOK_ROOT, 'sensors', 'proto', 'sensors.proto');
 
 export const SWL_SENSOR_TYPES: Record<number, string> = {
   1: 'UGS',
@@ -54,10 +58,12 @@ export async function parseSensorPayload(b64: string): Promise<SensorPayload | n
   const messageName = TYPE_MESSAGE[typeNum];
   if (!messageName) return null;
 
+  const payload = buf.slice(4);
+
   try {
     const root = await getRoot();
     const MessageType = root.lookupType(messageName);
-    const decoded = MessageType.decode(buf.slice(4));
+    const decoded = MessageType.decode(payload);
     const sensorData = MessageType.toObject(decoded, {
       defaults: false,
       longs: String,
@@ -65,8 +71,14 @@ export async function parseSensorPayload(b64: string): Promise<SensorPayload | n
       bytes: String,
     });
     return { sensorType: typeNum, sensorName, sensorData };
-  } catch (err) {
-    console.warn('[SensorParser] Failed to decode sensor type', typeNum, ':', err);
+  } catch {
+    // Fall back to JSON — simulator tools send JSON instead of protobuf.
+  }
+
+  try {
+    const sensorData = JSON.parse(payload.toString('utf8'));
+    return { sensorType: typeNum, sensorName, sensorData };
+  } catch {
     return null;
   }
 }

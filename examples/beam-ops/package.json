@@ -41,6 +41,10 @@
           "from": "../beam-cookbook/rpc/bin",
           "to": "beam-cookbook/rpc/bin",
           "filter": ["rpc_darwin_*"]
+        },
+        {
+          "from": "../../sensors/proto/sensors.proto",
+          "to": "beam-cookbook/sensors/proto/sensors.proto"
         }
       ]
     },
@@ -61,6 +65,10 @@
           "from": "../beam-cookbook/rpc/bin",
           "to": "beam-cookbook/rpc/bin",
           "filter": ["rpc_linux_*"]
+        },
+        {
+          "from": "../../sensors/proto/sensors.proto",
+          "to": "beam-cookbook/sensors/proto/sensors.proto"
         }
       ]
     }
