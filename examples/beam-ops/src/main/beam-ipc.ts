@@ -234,15 +234,9 @@ export function setupBeamHandlers(): void {
     return beamFetch(path, { method: 'POST', body: '' });
   });
 
-  ipcMain.handle('beam:flush-queue', async (_e, channel?: string) => {
-    const channels = channel ? [channel] : ['Satellite', 'Radio', 'Cellular'];
-    const results = await Promise.allSettled(
-      channels.map((ch) =>
-        beamFetch<{ deleted: number }>(`/api/queue?channel=${encodeURIComponent(ch)}`, { method: 'DELETE', body: '' })
-      )
-    );
-    const deleted = results.reduce((sum, r) => sum + (r.status === 'fulfilled' ? (r.value?.deleted ?? 0) : 0), 0);
-    return { flushed: deleted, total: deleted };
+  ipcMain.handle('beam:flush-queue', async () => {
+    const result = await beamFetch<{ flushed: boolean }>('/api/device/flush-queue', { method: 'POST', body: '' });
+    return { flushed: result?.flushed ? 1 : 0, total: 1 };
   });
 
 

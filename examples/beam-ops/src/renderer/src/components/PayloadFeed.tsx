@@ -177,13 +177,13 @@ export default function PayloadFeed({ workspaceId }: { workspaceId: string | nul
           className={`panel-tab${tab === 'feed' ? ' panel-tab--active' : ''}`}
           onClick={() => setTab('feed')}
         >
-          INBOUND
+          BEAM I/O
         </button>
         <button
           className={`panel-tab${tab === 'queue' ? ' panel-tab--active' : ''}`}
           onClick={() => setTab('queue')}
         >
-          OUTBOUND
+          BEAM OUTBOUND
         </button>
       </div>
 
