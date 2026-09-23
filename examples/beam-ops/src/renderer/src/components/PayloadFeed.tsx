@@ -67,10 +67,10 @@ function formatSensorContent(sensorType: number, data: Record<string, unknown>):
 
   switch (sensorType) {
     case 1: { // UGS
-      const threat = str('threat_type', 'ThreatType') ?? '';
-      const peak = num('peak_amplitude', 'PeakAmplitude') ?? 0;
-      const node = str('node_id', 'NodeID') ?? '';
-      const conf = num('confidence_pct', 'ConfidencePct');
+      const threat = str('threatType', 'threat_type') ?? '';
+      const peak = num('peakAmplitude', 'peak_amplitude') ?? 0;
+      const node = str('nodeId', 'node_id') ?? '';
+      const conf = num('confidencePct', 'confidence_pct');
       let s = `UGS ${node} threat=${threat} peak=${peak.toExponential(2)} m/s²`;
       if (conf !== undefined && threat !== 'NONE') s += ` conf=${conf}%`;
       return s;
@@ -113,9 +113,9 @@ function formatSensorContent(sensorType: number, data: Record<string, unknown>):
       return parts.length ? `IMU ${parts.join(' ')}` : 'VIMU';
     }
     case 5: { // SEISMOGRAPH
-      const pgv = num('pgv_ms');
+      const pgv = num('pgvMs', 'pgv_ms');
       const intensity = num('intensity');
-      const eventId = str('event_id');
+      const eventId = str('eventId', 'event_id');
       const parts: string[] = [];
       if (pgv !== undefined) parts.push(`PGV=${pgv.toExponential(2)}`);
       if (intensity !== undefined) parts.push(`MMI=${intensity}`);

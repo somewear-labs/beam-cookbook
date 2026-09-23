@@ -146,20 +146,17 @@ export default function SeismographPanel() {
     let bhz: number[], bhn: number[], bhe: number[], isEvent: boolean;
 
     if (isUGS) {
-      // UGS sends seismic_e/n/z arrays — map to BHE/BHN/BHZ channels.
-      const raw_e = (data.SeismicE as number[] | undefined) ?? (data.seismic_e as number[] | undefined) ?? [];
-      const raw_n = (data.SeismicN as number[] | undefined) ?? (data.seismic_n as number[] | undefined) ?? [];
-      const raw_z = (data.SeismicZ as number[] | undefined) ?? (data.seismic_z as number[] | undefined) ?? [];
-      bhz = raw_z;
-      bhn = raw_n;
-      bhe = raw_e;
-      const threat = (data.ThreatType as string | undefined) ?? (data.threat_type as string | undefined) ?? 'NONE';
+      // UGS sends seismicE/N/Z arrays (camelCase from protobufjs) — map to BHE/BHN/BHZ channels.
+      bhz = (data.seismicZ as number[] | undefined) ?? [];
+      bhn = (data.seismicN as number[] | undefined) ?? [];
+      bhe = (data.seismicE as number[] | undefined) ?? [];
+      const threat = (data.threatType as string | undefined) ?? 'NONE';
       isEvent = threat !== 'NONE';
     } else {
-      bhz = (data.channel_bhz as number[] | undefined) ?? [];
-      bhn = (data.channel_bhn as number[] | undefined) ?? [];
-      bhe = (data.channel_bhe as number[] | undefined) ?? [];
-      isEvent = !!data.event_id;
+      bhz = (data.channelBhz as number[] | undefined) ?? [];
+      bhn = (data.channelBhn as number[] | undefined) ?? [];
+      bhe = (data.channelBhe as number[] | undefined) ?? [];
+      isEvent = !!data.eventId;
     }
 
     const samples: Sample[] = bhz.map((_, i) => ({
@@ -177,38 +174,29 @@ export default function SeismographPanel() {
     }
 
     if (isUGS) {
-      const nodeId = (data.NodeID as string | undefined) ?? (data.node_id as string | undefined) ?? 'UGS';
-      const peak = (data.PeakAmplitude as number | undefined) ?? (data.peak_amplitude as number | undefined) ?? 0;
-      const eventId = (data.EventID as string | undefined) ?? (data.event_id as string | undefined);
-      const threat = (data.ThreatType as string | undefined) ?? (data.threat_type as string | undefined) ?? 'NONE';
-      setInfo({
-        stationId: nodeId,
-        network: 'UGS',
-        pgv: peak,
-        intensity: 1,
-        eventId,
-        threatType: threat,
-      });
+      const nodeId = (data.nodeId as string | undefined) ?? 'UGS';
+      const peak = (data.peakAmplitude as number | undefined) ?? 0;
+      const eventId = (data.eventId as string | undefined);
+      const threat = (data.threatType as string | undefined) ?? 'NONE';
+      setInfo({ stationId: nodeId, network: 'UGS', pgv: peak, intensity: 1, eventId, threatType: threat });
       if (isEvent && eventId) {
-        const threat = (data.ThreatType as string | undefined) ?? (data.threat_type as string | undefined) ?? '';
-        const conf = (data.ConfidencePct as number | undefined) ?? (data.confidence_pct as number | undefined);
+        const conf = (data.confidencePct as number | undefined);
         setEventBanner(`${eventId} ${threat}${conf !== undefined ? ` ${conf}%` : ''}`);
         if (bannerTimer.current) clearTimeout(bannerTimer.current);
         bannerTimer.current = setTimeout(() => setEventBanner(null), 30_000);
       }
     } else {
       setInfo({
-        stationId: (data.station_id as string | undefined) ?? 'RCOE',
-        network: (data.network_code as string | undefined) ?? 'CI',
-        pgv: (data.pgv_ms as number | undefined) ?? 0,
+        stationId: (data.stationId as string | undefined) ?? 'RCOE',
+        network: (data.networkCode as string | undefined) ?? 'CI',
+        pgv: (data.pgvMs as number | undefined) ?? 0,
         intensity: (data.intensity as number | undefined) ?? 1,
-        eventId: data.event_id as string | undefined,
+        eventId: data.eventId as string | undefined,
         magnitude: data.magnitude as number | undefined,
       });
-
       if (isEvent) {
         const mag = data.magnitude != null ? ` M${(data.magnitude as number).toFixed(1)}` : '';
-        setEventBanner(`${data.event_id}${mag}`);
+        setEventBanner(`${data.eventId}${mag}`);
         if (bannerTimer.current) clearTimeout(bannerTimer.current);
         bannerTimer.current = setTimeout(() => setEventBanner(null), 30_000);
       }
