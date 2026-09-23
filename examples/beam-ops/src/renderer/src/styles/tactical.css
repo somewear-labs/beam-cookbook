@@ -959,6 +959,36 @@
   overflow-x: auto;
 }
 
+.sensor-detail {
+  white-space: normal;
+  word-break: normal;
+}
+
+.sensor-detail-header {
+  color: var(--accent-amber);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  margin-bottom: 6px;
+}
+
+.sensor-detail-row {
+  display: grid;
+  grid-template-columns: 82px 1fr;
+  gap: 2px 8px;
+  padding: 1px 0;
+}
+
+.sensor-detail-label {
+  color: var(--text-muted);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+}
+
+.sensor-detail-value {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
 /* ── Panel tabs (PAYLOAD FEED | QUEUE) ───────────────────────────────────── */
 
 .panel-tabs {

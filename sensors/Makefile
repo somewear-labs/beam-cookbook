@@ -1,4 +1,4 @@
-CMDS := ugs tws cbrn vimu seismograph
+CMDS := ugs tws cbrn vimu seismograph sysmon
 
 all: $(addprefix bin/, $(CMDS))
 
