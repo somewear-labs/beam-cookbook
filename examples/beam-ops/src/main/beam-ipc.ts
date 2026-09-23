@@ -255,6 +255,13 @@ export function setupBeamHandlers(): void {
     sseLoop('/api/payloads/tail', ctrl, async (raw) => {
       const p = raw as Record<string, unknown>;
       if (String(p.channel ?? '').toLowerCase() === 'none') return;
+      // The tail stream omits contentBytes — fetch it for IPv4Datagram payloads.
+      if (typeof p.contentBytes !== 'string' && typeof p.datagramId === 'string' && p.type === 'IPv4Datagram') {
+        try {
+          const full = await beamFetch<Record<string, unknown>>(`/api/payloads/${p.datagramId}`);
+          if (typeof full?.contentBytes === 'string') p.contentBytes = full.contentBytes;
+        } catch { /* proceed without contentBytes */ }
+      }
       // Sensor check first — SWL-framed payloads must not be fed to the RPC decoder.
       await enrichWithSensorData(p);
       if (p.sensorType === undefined && !p.content && typeof p.type === 'string' && typeof p.contentBytes === 'string') {

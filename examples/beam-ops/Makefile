@@ -53,8 +53,13 @@ ship-local:
 		ssh $$host 'mkdir -p ~/Library/Application\ Support/"Beam Ops"'; \
 		ssh $$host 'cat > ~/Library/Application\ Support/"Beam Ops"/rpc_darwin_arm64 && chmod +x ~/Library/Application\ Support/"Beam Ops"/rpc_darwin_arm64' \
 			< ../beam-cookbook/rpc/bin/rpc_darwin_arm64; \
+		ssh $$host 'pkill -x "Beam Ops" 2>/dev/null; sleep 1; open "/Applications/Beam Ops.app"'; \
 		echo "  done $$host"; \
 	done
+	@echo "→ deploying locally (mac)"
+	@unzip -o dist-electron/$(APP)_mac_arm64.zip -d /Applications > /dev/null
+	@pkill -x "Beam Ops" 2>/dev/null; sleep 1; open "/Applications/Beam Ops.app"
+	@echo "  done local"
 
 # Push the local beam dev jar to all SSH devices and restart the daemon.
 ship-beam-jar:
