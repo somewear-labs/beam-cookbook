@@ -100,6 +100,17 @@ export interface SatQuality {
   time: number;    // epoch ms
 }
 
+export interface DeviceQueueReport {
+  utilization: number;
+  capacity: number;
+  satCount: number;
+  radioCount: number;
+  cellCount: number;
+  backhaulCount: number;
+  hasReport: boolean;
+  freeSlots: number;
+}
+
 export interface ValidateServerResponse {
   valid: boolean;
   appUrl?: string;
@@ -196,6 +207,9 @@ export const beamApi = {
 
   flushQueue: (channel?: string): Promise<{ flushed: number; total: number }> =>
     window.beamApi.flushQueue(channel),
+
+  tailDeviceQueueReport: (callback: (report: DeviceQueueReport) => void): (() => void) =>
+    window.beamApi.tailDeviceQueueReport(callback),
 };
 
 // ─── Window type declarations ─────────────────────────────────────────────────
@@ -226,6 +240,7 @@ declare global {
       queue: (channel?: string) => Promise<QueueItem[]>;
       cancelPackage: (parcelId: number, channel?: string) => Promise<void>;
       flushQueue: (channel?: string) => Promise<{ flushed: number; total: number }>;
+      tailDeviceQueueReport: (callback: (report: DeviceQueueReport) => void) => () => void;
     };
     tileApi: {
       tileServerUrl: string;

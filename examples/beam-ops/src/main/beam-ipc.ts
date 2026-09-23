@@ -102,6 +102,7 @@ function sseLoop(
 const _payloadTails = new Map<number, AbortController>();
 const _networkTails = new Map<number, AbortController>();
 const _satTails = new Map<number, AbortController>();
+const _queueReportTails = new Map<number, AbortController>();
 let _usbInterval: ReturnType<typeof setInterval> | null = null;
 
 // ─── Setup / teardown ─────────────────────────────────────────────────────────
@@ -302,6 +303,22 @@ export function setupBeamHandlers(): void {
     _satTails.delete(event.sender.id);
   });
 
+  ipcMain.on('beam:tail-queue-report', (event) => {
+    const id = event.sender.id;
+    _queueReportTails.get(id)?.abort();
+    const ctrl = new AbortController();
+    _queueReportTails.set(id, ctrl);
+
+    sseLoop('/api/device/queue-report/tail', ctrl, (report) => {
+      if (!event.sender.isDestroyed()) event.sender.send('beam:queue-report-event', report);
+    });
+  });
+
+  ipcMain.on('beam:stop-queue-report-tail', (event) => {
+    _queueReportTails.get(event.sender.id)?.abort();
+    _queueReportTails.delete(event.sender.id);
+  });
+
   // ── USB auto-connect ───────────────────────────────────────────────────────
 
   let knownDevices = _usbDevices();
@@ -330,9 +347,11 @@ export function stopBeamHandlers(): void {
   for (const ctrl of _payloadTails.values()) ctrl.abort();
   for (const ctrl of _networkTails.values()) ctrl.abort();
   for (const ctrl of _satTails.values()) ctrl.abort();
+  for (const ctrl of _queueReportTails.values()) ctrl.abort();
   _payloadTails.clear();
   _networkTails.clear();
   _satTails.clear();
+  _queueReportTails.clear();
 }
 
 export function cleanupWindowTails(webContentsId: number): void {
@@ -342,6 +361,8 @@ export function cleanupWindowTails(webContentsId: number): void {
   _networkTails.delete(webContentsId);
   _satTails.get(webContentsId)?.abort();
   _satTails.delete(webContentsId);
+  _queueReportTails.get(webContentsId)?.abort();
+  _queueReportTails.delete(webContentsId);
 }
 
 function _usbDevices(): Set<string> {

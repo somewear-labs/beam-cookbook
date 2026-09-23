@@ -9,6 +9,7 @@ import EdgeComputePanel from './components/EdgeComputePanel';
 import Sidebar from './components/Sidebar';
 import SeismographPanel from './components/SeismographPanel';
 import GeoSearch from './components/GeoSearch';
+import DeviceQueueReportBox from './components/DeviceQueueReportBox';
 import { beamController, ConnectionState } from './controllers/BeamController';
 import { mapController } from './controllers/MapController';
 import { AuthStateResponse, WorkspaceInfo, beamApi } from './services/beamApi';
@@ -415,8 +416,9 @@ export default function App() {
             </div>
           </div>
 
-          {/* Right side: payload feed */}
+          {/* Right side: device queue report + payload feed */}
           <div className="overlay-right">
+            <DeviceQueueReportBox />
             <PayloadFeed workspaceId={activeWorkspace?.workspaceId ?? null} />
           </div>
 

@@ -409,6 +409,10 @@
   z-index: 50;
   width: auto;
   max-height: calc(100vh - 200px);
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 8px;
 }
 
 .overlay-center {
@@ -957,36 +961,6 @@
   white-space: pre-wrap;
   word-break: break-all;
   overflow-x: auto;
-}
-
-.sensor-detail {
-  white-space: normal;
-  word-break: normal;
-}
-
-.sensor-detail-header {
-  color: var(--accent-amber);
-  font-size: 9px;
-  letter-spacing: 0.12em;
-  margin-bottom: 6px;
-}
-
-.sensor-detail-row {
-  display: grid;
-  grid-template-columns: 82px 1fr;
-  gap: 2px 8px;
-  padding: 1px 0;
-}
-
-.sensor-detail-label {
-  color: var(--text-muted);
-  font-size: 9px;
-  letter-spacing: 0.06em;
-}
-
-.sensor-detail-value {
-  color: var(--text-primary);
-  font-variant-numeric: tabular-nums;
 }
 
 /* ── Panel tabs (PAYLOAD FEED | QUEUE) ───────────────────────────────────── */
@@ -2645,4 +2619,61 @@
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50%       { opacity: 0.45; }
+}
+
+/* ── Device Queue Report Box ─────────────────────────────────────────────────── */
+
+.queue-report-box {
+  background: rgba(15, 25, 35, 0.94);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(8px);
+  padding: 8px 10px;
+  min-width: 72px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.queue-report-title {
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  color: var(--accent-cyan);
+  margin-bottom: 4px;
+  white-space: nowrap;
+}
+
+.queue-report-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.queue-report-label {
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+.queue-report-value {
+  font-size: 10px;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.queue-report-full {
+  color: var(--accent-red, #e05555);
+}
+
+.queue-report-divider {
+  border-top: 1px solid var(--border);
+  margin: 2px 0;
+}
+
+.queue-report-empty {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 4px 0;
 }

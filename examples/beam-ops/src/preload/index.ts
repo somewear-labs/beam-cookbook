@@ -87,6 +87,17 @@ export interface SatQuality {
   time: number;    // epoch ms
 }
 
+export interface DeviceQueueReport {
+  utilization: number;
+  capacity: number;
+  satCount: number;
+  radioCount: number;
+  cellCount: number;
+  backhaulCount: number;
+  hasReport: boolean;
+  freeSlots: number;
+}
+
 // ─── Beam API exposed to renderer ─────────────────────────────────────────────
 
 const beamApi = {
@@ -250,6 +261,19 @@ const beamApi = {
 
   flushQueue: (channel?: string): Promise<{ flushed: number; total: number }> =>
     ipcRenderer.invoke('beam:flush-queue', channel),
+
+  tailDeviceQueueReport: (callback: (report: DeviceQueueReport) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, report: DeviceQueueReport) => {
+      callback(report);
+    };
+    ipcRenderer.on('beam:queue-report-event', handler);
+    ipcRenderer.send('beam:tail-queue-report');
+
+    return () => {
+      ipcRenderer.removeListener('beam:queue-report-event', handler);
+      ipcRenderer.send('beam:stop-queue-report-tail');
+    };
+  },
 };
 
 // ─── RPC API exposed to renderer ─────────────────────────────────────────────
@@ -390,6 +414,7 @@ declare global {
       checkAuthToken: (nonce: string) => Promise<{ token: string | null }>;
       fetchOrganizations: (nonce: string) => Promise<{ organizations: Array<{ id: string; name: string }> }>;
       createApiKey: (organizationId: string, nonce: string) => Promise<{ success: boolean; message: string }>;
+      tailDeviceQueueReport: (callback: (report: DeviceQueueReport) => void) => () => void;
     };
     rpcApi: {
       start: (workspaceId: number, targetUserId?: number) => Promise<void>;
