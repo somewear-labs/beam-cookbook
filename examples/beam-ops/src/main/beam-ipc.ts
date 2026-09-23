@@ -239,6 +239,10 @@ export function setupBeamHandlers(): void {
     return { flushed: result?.flushed ? 1 : 0, total: 1 };
   });
 
+  ipcMain.handle('beam:queue-report', () =>
+    beamFetch('/api/device/queue-report/tail?format=json')
+  );
+
 
   // ── SSE tails ──────────────────────────────────────────────────────────────
 

@@ -262,6 +262,9 @@ const beamApi = {
   flushQueue: (channel?: string): Promise<{ flushed: number; total: number }> =>
     ipcRenderer.invoke('beam:flush-queue', channel),
 
+  queueReport: (): Promise<DeviceQueueReport> =>
+    ipcRenderer.invoke('beam:queue-report'),
+
   tailDeviceQueueReport: (callback: (report: DeviceQueueReport) => void): (() => void) => {
     const handler = (_event: Electron.IpcRendererEvent, report: DeviceQueueReport) => {
       callback(report);
@@ -414,6 +417,7 @@ declare global {
       checkAuthToken: (nonce: string) => Promise<{ token: string | null }>;
       fetchOrganizations: (nonce: string) => Promise<{ organizations: Array<{ id: string; name: string }> }>;
       createApiKey: (organizationId: string, nonce: string) => Promise<{ success: boolean; message: string }>;
+      queueReport: () => Promise<DeviceQueueReport>;
       tailDeviceQueueReport: (callback: (report: DeviceQueueReport) => void) => () => void;
     };
     rpcApi: {
