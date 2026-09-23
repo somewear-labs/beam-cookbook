@@ -6,7 +6,7 @@
   "author": "Somewear Labs",
   "homepage": ".",
   "scripts": {
-    "dev": "pkill -f 'electron-vite dev'; pkill -f 'out/main/index.js'; ELECTRON_EXTRA_LAUNCH_ARGS=--no-sandbox electron-vite dev",
+    "dev": "pkill -f 'electron-vite dev'; pkill -f 'out/main/index.js'; electron-vite dev -- --no-sandbox",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "tiles:create": "node scripts/create-tiles.mjs",
