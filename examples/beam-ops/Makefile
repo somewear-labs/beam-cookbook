@@ -3,7 +3,7 @@ GCS_BUCKET := gs://get-somewear-app/atakplugin
 
 DEVICES_ARM64     := tank@100.68.160.75 jahmelon@100.68.160.77
 DEVICES_MAC_ARM64 := matthewroberts@mac.lan
-BEAM_JAR          := $(HOME)/development/beam/app/build/libs/somewear-beam.jar
+BEAM_JAR          := ../beam/app/build/libs/somewear-beam.jar
 
 .PHONY: package-mac package-linux ship ship-local ship-beam-jar clean
 

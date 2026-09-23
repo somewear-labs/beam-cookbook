@@ -40,9 +40,7 @@
         {
           "from": "../beam-cookbook/rpc/bin",
           "to": "beam-cookbook/rpc/bin",
-          "filter": [
-            "rpc_darwin_*"
-          ]
+          "filter": ["rpc_darwin_*"]
         }
       ]
     },
@@ -62,9 +60,7 @@
         {
           "from": "../beam-cookbook/rpc/bin",
           "to": "beam-cookbook/rpc/bin",
-          "filter": [
-            "rpc_linux_*"
-          ]
+          "filter": ["rpc_linux_*"]
         }
       ]
     }

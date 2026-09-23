@@ -6,7 +6,7 @@ import { copyFileSync, mkdirSync, readdirSync, existsSync } from 'fs';
 import { join } from 'path';
 
 export default async function afterPack({ appOutDir, packager, electronPlatformName }) {
-  const srcDir = join(packager.projectDir, '..', '..', '..', 'beam-cookbook', 'rpc', 'bin');
+  const srcDir = join(packager.projectDir, '..', 'beam-cookbook', 'rpc', 'bin');
   if (!existsSync(srcDir)) {
     console.warn('[after-pack] beam-cookbook/rpc/bin not found — skipping');
     return;

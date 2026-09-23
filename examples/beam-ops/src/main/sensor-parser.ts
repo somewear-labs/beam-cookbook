@@ -13,8 +13,6 @@ export const SWL_SENSOR_TYPES: Record<number, string> = {
   3: 'TWS',
   4: 'VIMU',
   5: 'SEISMOGRAPH',
-  6: 'CAMERA',
-  7: 'SYSMON',
 };
 
 const TYPE_MESSAGE: Record<number, string> = {
@@ -23,8 +21,6 @@ const TYPE_MESSAGE: Record<number, string> = {
   3: 'sensors.TacticalWeather',
   4: 'sensors.VehicleIMUData',
   5: 'sensors.SeismicData',
-  6: 'sensors.CameraDetectionData',
-  7: 'sensors.ComputerDiagnosticsData',
 };
 
 export interface SensorPayload {
