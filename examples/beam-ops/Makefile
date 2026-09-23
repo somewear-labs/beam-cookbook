@@ -57,7 +57,7 @@ ship-local:
 		echo "  done $$host"; \
 	done
 	@echo "→ deploying locally (mac)"
-	@unzip -o dist-electron/$(APP)_mac_arm64.zip -d /Applications > /dev/null
+	@unzip -o dist-electron/$(APP)_mac_arm64.zip -d /Applications > /dev/null 2>&1; true
 	@pkill -x "Beam Ops" 2>/dev/null; sleep 1; open "/Applications/Beam Ops.app"
 	@echo "  done local"
 
