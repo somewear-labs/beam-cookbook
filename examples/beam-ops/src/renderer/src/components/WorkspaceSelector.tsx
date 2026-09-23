@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { beamController } from '../controllers/BeamController';
-import { beamApi, WorkspaceInfo, OrgItem } from '../services/beamApi';
+import { beamApi, WorkspaceInfo } from '../services/beamApi';
 
 interface WorkspaceSelectorProps {
   onWorkspaceActivated: () => void;
@@ -8,117 +8,32 @@ interface WorkspaceSelectorProps {
 
 type View = 'select' | 'provision';
 
-const DEFAULT_SERVER = 'api.somewear.co';
-
-type ProvisionStep =
-  | 'name'
-  | 'connecting'
-  | 'auth'
-  | 'auth-validating'
-  | 'auth-browser'
-  | 'auth-org'
-  | 'provisioning'
-  | 'done'
-  | 'error';
+type ProvisionStep = 'input' | 'connecting' | 'provisioning' | 'done' | 'error';
 
 function ProvisionView({ onBack, onDone }: { onBack: () => void; onDone: () => void }) {
-  const [step, setStep] = useState<ProvisionStep>('name');
+  const [step, setStep] = useState<ProvisionStep>('input');
   const [deviceName, setDeviceName] = useState('');
-  const [serverHost, setServerHost] = useState('');
-  const [nonce, setNonce] = useState('');
-  const [appUrl, setAppUrl] = useState('');
-  const [orgs, setOrgs] = useState<OrgItem[]>([]);
+  const [apiKey, setApiKey] = useState('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const stopPolling = () => {
-    if (pollRef.current !== null) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
-  };
-
-  useEffect(() => stopPolling, []);
-
-  const handleConnect = async () => {
-    if (!deviceName.trim()) return;
+  const handleProvision = async () => {
+    if (!deviceName.trim() || !apiKey.trim()) return;
     setErrorMsg(null);
     setStep('connecting');
+
     const connected = await beamApi.deviceConnect();
     if (!connected) {
       setStep('error');
       setErrorMsg('No Beam device detected via USB. Plug one in and try again.');
       return;
     }
-    setStep('auth');
-  };
 
-  const handleAuthenticate = async () => {
-    const host = serverHost.trim() || DEFAULT_SERVER;
-    setErrorMsg(null);
-    setStep('auth-validating');
-    try {
-      const result = await beamApi.validateServer(host);
-      if (!result.valid || !result.appUrl || !result.nonce) {
-        setStep('auth');
-        setErrorMsg(result.error ?? 'Server validation failed. Check the domain and try again.');
-        return;
-      }
-      const callbackUrl = `${result.appUrl}?callback_port=9091&nonce=${result.nonce}`;
-      await beamApi.openExternal(callbackUrl);
-      setNonce(result.nonce);
-      setAppUrl(result.appUrl);
-      setStep('auth-browser');
-
-      const deadline = Date.now() + 5 * 60 * 1000;
-      pollRef.current = setInterval(async () => {
-        if (Date.now() > deadline) {
-          stopPolling();
-          setStep('error');
-          setErrorMsg('Authentication timed out. Try again.');
-          return;
-        }
-        try {
-          const tokenResult = await beamApi.checkAuthToken(result.nonce!);
-          if (tokenResult?.token) {
-            stopPolling();
-            await handleOrgFetch(result.nonce!);
-          }
-        } catch { /* keep polling */ }
-      }, 2000);
-    } catch (err) {
-      setStep('auth');
-      setErrorMsg(err instanceof Error ? err.message : String(err));
-    }
-  };
-
-  const handleOrgFetch = async (activeNonce: string) => {
-    try {
-      const { organizations } = await beamApi.fetchOrganizations(activeNonce);
-      if (!organizations || organizations.length === 0) {
-        setStep('error');
-        setErrorMsg('No organizations found. Contact your org admin to be added.');
-        return;
-      }
-      if (organizations.length === 1) {
-        await handleCreateKey(organizations[0].id, activeNonce);
-      } else {
-        setOrgs(organizations);
-        setStep('auth-org');
-      }
-    } catch (err) {
-      setStep('error');
-      setErrorMsg(err instanceof Error ? err.message : String(err));
-    }
-  };
-
-  const handleCreateKey = async (organizationId: string, activeNonce: string) => {
     setStep('provisioning');
     try {
-      const keyResult = await beamApi.createApiKey(organizationId, activeNonce);
+      const keyResult = await beamApi.setApiKey(apiKey.trim());
       if (!keyResult.success) {
         setStep('error');
-        setErrorMsg(keyResult.message || 'API key creation failed.');
+        setErrorMsg(keyResult.message || 'API key authentication failed.');
         return;
       }
       await beamApi.provisionEdge(deviceName.trim());
@@ -130,13 +45,11 @@ function ProvisionView({ onBack, onDone }: { onBack: () => void; onDone: () => v
   };
 
   const handleReset = () => {
-    stopPolling();
-    setStep('name');
+    setStep('input');
     setErrorMsg(null);
-    setNonce('');
-    setAppUrl('');
-    setOrgs([]);
   };
+
+  const canSubmit = deviceName.trim().length > 0 && apiKey.trim().length > 0;
 
   return (
     <>
@@ -147,10 +60,10 @@ function ProvisionView({ onBack, onDone }: { onBack: () => void; onDone: () => v
       <div className="workspace-modal-divider" />
 
       <div className="workspace-modal-body">
-        {step === 'name' && (
+        {step === 'input' && (
           <>
             <div className="provision-instructions">
-              You are provisioning this machine as a Somewear edge compute device. Give it a name to continue.
+              Plug your Beam device in via USB, then enter a name for this edge node and your Somewear API key.
             </div>
             <div className="provision-field">
               <label className="provision-label">DEVICE NAME</label>
@@ -160,9 +73,19 @@ function ProvisionView({ onBack, onDone }: { onBack: () => void; onDone: () => v
                 placeholder="e.g. EDGE-NODE-01"
                 value={deviceName}
                 onChange={e => setDeviceName(e.target.value.toUpperCase())}
-                onKeyDown={e => e.key === 'Enter' && deviceName.trim() && handleConnect()}
                 autoFocus
                 maxLength={32}
+              />
+            </div>
+            <div className="provision-field">
+              <label className="provision-label">API KEY</label>
+              <input
+                className="provision-input"
+                type="password"
+                placeholder="Somewear API key"
+                value={apiKey}
+                onChange={e => setApiKey(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && canSubmit && handleProvision()}
               />
             </div>
           </>
@@ -172,57 +95,6 @@ function ProvisionView({ onBack, onDone }: { onBack: () => void; onDone: () => v
           <div className="provision-status">
             <span className="blink">▋</span> CONNECTING TO BEAM DEVICE...
           </div>
-        )}
-
-        {step === 'auth' && (
-          <>
-            <div className="provision-instructions">
-              Enter your Somewear domain to open the browser and sign in.
-            </div>
-            <div className="provision-field">
-              <label className="provision-label">SOMEWEAR DOMAIN</label>
-              <input
-                className="provision-input"
-                type="text"
-                placeholder={DEFAULT_SERVER}
-                value={serverHost}
-                onChange={e => setServerHost(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleAuthenticate()}
-                autoFocus
-              />
-            </div>
-            {errorMsg && (
-              <div className="provision-status provision-status--err">{errorMsg}</div>
-            )}
-          </>
-        )}
-
-        {step === 'auth-validating' && (
-          <div className="provision-status">
-            <span className="blink">▋</span> VALIDATING SERVER...
-          </div>
-        )}
-
-        {step === 'auth-browser' && (
-          <div className="provision-status">
-            <span className="blink">▋</span> WAITING FOR BROWSER AUTHENTICATION...
-          </div>
-        )}
-
-        {step === 'auth-org' && (
-          <>
-            <div className="provision-instructions">Select your organization.</div>
-            {orgs.map(org => (
-              <div
-                key={org.id}
-                className="workspace-item"
-                onClick={() => handleCreateKey(org.id, nonce)}
-              >
-                <span className="workspace-radio">○</span>
-                <span className="workspace-name">{org.name}</span>
-              </div>
-            ))}
-          </>
         )}
 
         {step === 'provisioning' && (
@@ -255,36 +127,21 @@ function ProvisionView({ onBack, onDone }: { onBack: () => void; onDone: () => v
             <button className="workspace-back-btn" onClick={onBack}>BACK</button>
             <button className="workspace-activate-btn" onClick={handleReset}>RETRY</button>
           </div>
-        ) : step === 'auth' ? (
-          <div className="provision-footer-row">
-            <button className="workspace-back-btn" onClick={() => setStep('name')}>BACK</button>
-            <button className="workspace-activate-btn" onClick={handleAuthenticate}>
-              OPEN BROWSER TO AUTHENTICATE
-            </button>
-          </div>
-        ) : step === 'auth-browser' ? (
-          <div className="provision-footer-row">
-            <button className="workspace-back-btn" onClick={handleReset}>CANCEL</button>
-          </div>
-        ) : step === 'auth-org' ? (
-          <div className="provision-footer-row">
-            <button className="workspace-back-btn" onClick={handleReset}>CANCEL</button>
-          </div>
         ) : (
           <div className="provision-footer-row">
             <button
               className="workspace-back-btn"
               onClick={onBack}
-              disabled={step !== 'name'}
+              disabled={step !== 'input'}
             >
               BACK
             </button>
             <button
               className="workspace-activate-btn"
-              onClick={handleConnect}
-              disabled={!deviceName.trim() || step !== 'name'}
+              onClick={handleProvision}
+              disabled={!canSubmit || step !== 'input'}
             >
-              CONTINUE
+              PROVISION
             </button>
           </div>
         )}
