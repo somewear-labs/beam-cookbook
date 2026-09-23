@@ -54,10 +54,12 @@ export async function parseSensorPayload(b64: string): Promise<SensorPayload | n
   const messageName = TYPE_MESSAGE[typeNum];
   if (!messageName) return null;
 
+  const payload = buf.slice(4);
+
   try {
     const root = await getRoot();
     const MessageType = root.lookupType(messageName);
-    const decoded = MessageType.decode(buf.slice(4));
+    const decoded = MessageType.decode(payload);
     const sensorData = MessageType.toObject(decoded, {
       defaults: false,
       longs: String,
@@ -65,8 +67,14 @@ export async function parseSensorPayload(b64: string): Promise<SensorPayload | n
       bytes: String,
     });
     return { sensorType: typeNum, sensorName, sensorData };
-  } catch (err) {
-    console.warn('[SensorParser] Failed to decode sensor type', typeNum, ':', err);
+  } catch {
+    // Fall back to JSON — simulator tools send JSON instead of protobuf.
+  }
+
+  try {
+    const sensorData = JSON.parse(payload.toString('utf8'));
+    return { sensorType: typeNum, sensorName, sensorData };
+  } catch {
     return null;
   }
 }

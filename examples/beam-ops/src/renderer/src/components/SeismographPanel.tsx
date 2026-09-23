@@ -3,6 +3,7 @@ import { beamApi } from '../services/beamApi';
 import type { PayloadEvent } from '../services/beamApi';
 
 const SENSOR_TYPE_SEISMOGRAPH = 5;
+const SENSOR_TYPE_UGS = 1;
 const BUFFER_SIZE = 200;
 
 const CW = 340;
@@ -30,6 +31,7 @@ interface DisplayInfo {
   intensity: number;
   eventId?: string;
   magnitude?: number;
+  threatType?: string;
 }
 
 const MMI = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII'];
@@ -134,15 +136,31 @@ export default function SeismographPanel() {
 
   const ingestPayload = useCallback((payload: PayloadEvent) => {
     const p = payload as Record<string, unknown>;
-    if (p.sensorType !== SENSOR_TYPE_SEISMOGRAPH) return false;
+    const isSeismo = p.sensorType === SENSOR_TYPE_SEISMOGRAPH;
+    const isUGS = p.sensorType === SENSOR_TYPE_UGS;
+    if (!isSeismo && !isUGS) return false;
 
     const data = p.sensorData as Record<string, unknown> | undefined;
     if (!data) return false;
 
-    const bhz = (data.channel_bhz as number[] | undefined) ?? [];
-    const bhn = (data.channel_bhn as number[] | undefined) ?? [];
-    const bhe = (data.channel_bhe as number[] | undefined) ?? [];
-    const isEvent = !!data.event_id;
+    let bhz: number[], bhn: number[], bhe: number[], isEvent: boolean;
+
+    if (isUGS) {
+      // UGS sends seismic_e/n/z arrays — map to BHE/BHN/BHZ channels.
+      const raw_e = (data.SeismicE as number[] | undefined) ?? (data.seismic_e as number[] | undefined) ?? [];
+      const raw_n = (data.SeismicN as number[] | undefined) ?? (data.seismic_n as number[] | undefined) ?? [];
+      const raw_z = (data.SeismicZ as number[] | undefined) ?? (data.seismic_z as number[] | undefined) ?? [];
+      bhz = raw_z;
+      bhn = raw_n;
+      bhe = raw_e;
+      const threat = (data.ThreatType as string | undefined) ?? (data.threat_type as string | undefined) ?? 'NONE';
+      isEvent = threat !== 'NONE';
+    } else {
+      bhz = (data.channel_bhz as number[] | undefined) ?? [];
+      bhn = (data.channel_bhn as number[] | undefined) ?? [];
+      bhe = (data.channel_bhe as number[] | undefined) ?? [];
+      isEvent = !!data.event_id;
+    }
 
     const samples: Sample[] = bhz.map((_, i) => ({
       bhz: bhz[i] ?? 0,
@@ -158,20 +176,42 @@ export default function SeismographPanel() {
       setPanelVisible(true);
     }
 
-    setInfo({
-      stationId: (data.station_id as string | undefined) ?? 'RCOE',
-      network: (data.network_code as string | undefined) ?? 'CI',
-      pgv: (data.pgv_ms as number | undefined) ?? 0,
-      intensity: (data.intensity as number | undefined) ?? 1,
-      eventId: data.event_id as string | undefined,
-      magnitude: data.magnitude as number | undefined,
-    });
+    if (isUGS) {
+      const nodeId = (data.NodeID as string | undefined) ?? (data.node_id as string | undefined) ?? 'UGS';
+      const peak = (data.PeakAmplitude as number | undefined) ?? (data.peak_amplitude as number | undefined) ?? 0;
+      const eventId = (data.EventID as string | undefined) ?? (data.event_id as string | undefined);
+      const threat = (data.ThreatType as string | undefined) ?? (data.threat_type as string | undefined) ?? 'NONE';
+      setInfo({
+        stationId: nodeId,
+        network: 'UGS',
+        pgv: peak,
+        intensity: 1,
+        eventId,
+        threatType: threat,
+      });
+      if (isEvent && eventId) {
+        const threat = (data.ThreatType as string | undefined) ?? (data.threat_type as string | undefined) ?? '';
+        const conf = (data.ConfidencePct as number | undefined) ?? (data.confidence_pct as number | undefined);
+        setEventBanner(`${eventId} ${threat}${conf !== undefined ? ` ${conf}%` : ''}`);
+        if (bannerTimer.current) clearTimeout(bannerTimer.current);
+        bannerTimer.current = setTimeout(() => setEventBanner(null), 30_000);
+      }
+    } else {
+      setInfo({
+        stationId: (data.station_id as string | undefined) ?? 'RCOE',
+        network: (data.network_code as string | undefined) ?? 'CI',
+        pgv: (data.pgv_ms as number | undefined) ?? 0,
+        intensity: (data.intensity as number | undefined) ?? 1,
+        eventId: data.event_id as string | undefined,
+        magnitude: data.magnitude as number | undefined,
+      });
 
-    if (isEvent) {
-      const mag = data.magnitude != null ? ` M${(data.magnitude as number).toFixed(1)}` : '';
-      setEventBanner(`${data.event_id}${mag}`);
-      if (bannerTimer.current) clearTimeout(bannerTimer.current);
-      bannerTimer.current = setTimeout(() => setEventBanner(null), 30_000);
+      if (isEvent) {
+        const mag = data.magnitude != null ? ` M${(data.magnitude as number).toFixed(1)}` : '';
+        setEventBanner(`${data.event_id}${mag}`);
+        if (bannerTimer.current) clearTimeout(bannerTimer.current);
+        bannerTimer.current = setTimeout(() => setEventBanner(null), 30_000);
+      }
     }
     return true;
   }, []);
@@ -190,7 +230,7 @@ export default function SeismographPanel() {
         const newPayloads = payloads
           .filter((p) => {
             const raw = p as Record<string, unknown>;
-            if (raw.sensorType !== SENSOR_TYPE_SEISMOGRAPH) return false;
+            if (raw.sensorType !== SENSOR_TYPE_SEISMOGRAPH && raw.sensorType !== SENSOR_TYPE_UGS) return false;
             const key = String(p.datagramId ?? p.id ?? `${p.timestamp}_${p.channel}`);
             if (seenRef.current.has(key)) return false;
             seenRef.current.add(key);
@@ -227,14 +267,21 @@ export default function SeismographPanel() {
   return (
     <div className="seismograph-panel">
       <div className="seismograph-header">
-        <span className="seismograph-title">SEISMO</span>
-        <span className="seismograph-station">{info.network}.{info.stationId}</span>
+        <span className="seismograph-title">{info.network === 'UGS' ? 'UGS' : 'SEISMO'}</span>
+        <span className="seismograph-station">{info.network === 'UGS' ? info.stationId : `${info.network}.${info.stationId}`}</span>
         <span className="seismograph-stat">
-          PGV <span className="seismograph-stat-val">{pgvToStr(info.pgv)}</span>
+          PEAK <span className="seismograph-stat-val">{pgvToStr(info.pgv)}</span>
         </span>
-        <span className="seismograph-stat">
-          MMI <span className="seismograph-stat-val">{mmi}</span>
-        </span>
+        {info.network !== 'UGS' && (
+          <span className="seismograph-stat">
+            MMI <span className="seismograph-stat-val">{mmi}</span>
+          </span>
+        )}
+        {info.network === 'UGS' && info.threatType && (
+          <span className="seismograph-stat">
+            THREAT <span className={`seismograph-stat-val${info.threatType !== 'NONE' ? ' seismograph-threat-active' : ''}`}>{info.threatType}</span>
+          </span>
+        )}
         {eventBanner && (
           <span className="seismograph-event-badge">⚡ {eventBanner}</span>
         )}

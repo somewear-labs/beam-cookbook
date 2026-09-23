@@ -55,7 +55,100 @@ function ChannelIcon({ channel }: { channel?: string | null }) {
   return <span className="payload-channel" title={channel} />;
 }
 
+function formatSensorContent(sensorType: number, data: Record<string, unknown>): string {
+  const str = (k1: string, k2?: string): string | undefined => {
+    const v = data[k1] ?? (k2 ? data[k2] : undefined);
+    return v !== undefined ? String(v) : undefined;
+  };
+  const num = (k1: string, k2?: string): number | undefined => {
+    const v = data[k1] ?? (k2 ? data[k2] : undefined);
+    return v !== undefined ? Number(v) : undefined;
+  };
+
+  switch (sensorType) {
+    case 1: { // UGS
+      const threat = str('threat_type', 'ThreatType') ?? '';
+      const peak = num('peak_amplitude', 'PeakAmplitude') ?? 0;
+      const node = str('node_id', 'NodeID') ?? '';
+      const conf = num('confidence_pct', 'ConfidencePct');
+      let s = `UGS ${node} threat=${threat} peak=${peak.toExponential(2)} m/s²`;
+      if (conf !== undefined && threat !== 'NONE') s += ` conf=${conf}%`;
+      return s;
+    }
+    case 2: { // CBRN / air quality
+      const aqi = num('aqi', 'AQI');
+      const pm25 = num('pm25_ug_m3', 'PM25');
+      const co2 = num('co2_ppm', 'CO2');
+      const parts: string[] = [];
+      if (aqi !== undefined) parts.push(`AQI=${aqi}`);
+      if (pm25 !== undefined) parts.push(`PM2.5=${pm25}µg/m³`);
+      if (co2 !== undefined) parts.push(`CO2=${co2}ppm`);
+      return parts.length ? parts.join(' ') : 'CBRN';
+    }
+    case 3: { // TWS / GPS
+      const lat = num('latitude', 'Latitude');
+      const lon = num('longitude', 'Longitude');
+      const speed = num('speed_ms', 'SpeedMS');
+      const course = num('course_deg', 'CourseDeg');
+      if (lat !== undefined && lon !== undefined) {
+        let s = `${lat.toFixed(5)}°, ${lon.toFixed(5)}°`;
+        if (speed !== undefined) s += ` ${speed.toFixed(1)}m/s`;
+        if (course !== undefined) s += ` @${course.toFixed(0)}°`;
+        return s;
+      }
+      return 'TWS';
+    }
+    case 4: { // VIMU
+      const roll = num('roll_deg', 'Roll');
+      const pitch = num('pitch_deg', 'Pitch');
+      const yaw = num('yaw_deg', 'Yaw');
+      const ax = num('accel_x', 'AccelX');
+      const ay = num('accel_y', 'AccelY');
+      const az = num('accel_z', 'AccelZ');
+      const parts: string[] = [];
+      if (roll !== undefined) parts.push(`R=${roll.toFixed(1)}°`);
+      if (pitch !== undefined) parts.push(`P=${pitch.toFixed(1)}°`);
+      if (yaw !== undefined) parts.push(`Y=${yaw.toFixed(1)}°`);
+      if (ax !== undefined) parts.push(`A=(${ax.toFixed(2)},${ay?.toFixed(2) ?? '?'},${az?.toFixed(2) ?? '?'})m/s²`);
+      return parts.length ? `IMU ${parts.join(' ')}` : 'VIMU';
+    }
+    case 5: { // SEISMOGRAPH
+      const pgv = num('pgv_ms');
+      const intensity = num('intensity');
+      const eventId = str('event_id');
+      const parts: string[] = [];
+      if (pgv !== undefined) parts.push(`PGV=${pgv.toExponential(2)}`);
+      if (intensity !== undefined) parts.push(`MMI=${intensity}`);
+      if (eventId) parts.push(`evt=${eventId}`);
+      return parts.length ? `SEISMO ${parts.join(' ')}` : 'SEISMOGRAPH';
+    }
+    case 7: { // SYSMON
+      const cpu = num('cpuUsagePct', 'cpu_usage_pct');
+      const memUsed = num('memoryUsedMb', 'memory_used_mb');
+      const memTotal = num('memoryTotalMb', 'memory_total_mb');
+      const memPct = num('memoryUsedPct', 'memory_used_pct');
+      const load = num('loadAvg_1M') ?? num('loadAvg1M');
+      const disk = num('diskUsedPct', 'disk_used_pct');
+      const parts: string[] = [];
+      if (cpu !== undefined) parts.push(`CPU=${cpu.toFixed(1)}%`);
+      if (memUsed !== undefined && memTotal !== undefined) parts.push(`MEM=${memUsed}/${memTotal}MB`);
+      else if (memPct !== undefined) parts.push(`MEM=${memPct.toFixed(1)}%`);
+      if (load !== undefined) parts.push(`load=${load.toFixed(2)}`);
+      if (disk !== undefined) parts.push(`disk=${disk.toFixed(0)}%`);
+      return parts.length ? `SYSMON ${parts.join(' ')}` : 'SYSMON';
+    }
+    default: {
+      return `SENSOR_TYPE_${sensorType} ${JSON.stringify(data).slice(0, 60)}`;
+    }
+  }
+}
+
 function formatContent(payload: PayloadEvent): string {
+  const raw = payload as Record<string, unknown>;
+  if (raw.sensorType !== undefined && raw.sensorData && typeof raw.sensorData === 'object') {
+    return formatSensorContent(raw.sensorType as number, raw.sensorData as Record<string, unknown>);
+  }
+
   const c = payload.content;
   if (c && typeof c === 'object') {
     const obj = c as Record<string, unknown>;
@@ -67,7 +160,7 @@ function formatContent(payload: PayloadEvent): string {
     return JSON.stringify(c);
   }
   if (c) return String(c);
-  const { id: _id, timestamp: _ts, type: _type, content: _c, senderId: _s, ...rest } = payload;
+  const { id: _id, timestamp: _ts, type: _type, content: _c, senderId: _s, sensorType: _st, sensorName: _sn, sensorData: _sd, contentBytes: _cb, ...rest } = payload as Record<string, unknown>;
   const keys = Object.keys(rest);
   if (keys.length > 0) {
     return JSON.stringify(rest);

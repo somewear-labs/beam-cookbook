@@ -2577,6 +2577,10 @@
   font-variant-numeric: tabular-nums;
 }
 
+.seismograph-threat-active {
+  color: var(--accent-amber);
+}
+
 .seismograph-event-badge {
   font-size: 9px;
   letter-spacing: 0.04em;
