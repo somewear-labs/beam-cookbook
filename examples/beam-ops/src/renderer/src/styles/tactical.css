@@ -2518,6 +2518,10 @@
   transform: translateX(-50%);
   z-index: 50;
   pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: center;
 }
 
 .overlay-bottom-center > * {
@@ -2619,6 +2623,88 @@
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50%       { opacity: 0.45; }
+}
+
+/* ── Sysmon Panel ─────────────────────────────────────────────────────────────── */
+
+.sysmon-panel {
+  background: rgba(9, 14, 21, 0.94);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(8px);
+  display: flex;
+  flex-direction: column;
+  width: 340px;
+}
+
+.sysmon-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 7px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.sysmon-title {
+  font-size: 9px;
+  font-weight: bold;
+  letter-spacing: 0.12em;
+  color: var(--accent-cyan);
+  flex-shrink: 0;
+}
+
+.sysmon-node {
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.sysmon-stat {
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.sysmon-stat-val {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.sysmon-live {
+  font-size: 8px;
+  letter-spacing: 0.08em;
+  color: var(--accent-green);
+  margin-left: auto;
+  flex-shrink: 0;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.sysmon-clear-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.08em;
+  padding: 1px 5px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.sysmon-clear-btn:hover {
+  border-color: var(--accent-cyan);
+  color: var(--accent-cyan);
+}
+
+.sysmon-canvas {
+  display: block;
+  width: 340px;
+  height: 60px;
 }
 
 /* ── Device Queue Report Box ─────────────────────────────────────────────────── */

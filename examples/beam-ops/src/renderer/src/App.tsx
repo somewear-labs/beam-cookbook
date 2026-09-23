@@ -8,6 +8,7 @@ import EdgeNodesPanel from './components/EdgeNodesPanel';
 import EdgeComputePanel from './components/EdgeComputePanel';
 import Sidebar from './components/Sidebar';
 import SeismographPanel from './components/SeismographPanel';
+import SysmonPanel from './components/SysmonPanel';
 import GeoSearch from './components/GeoSearch';
 import DeviceQueueReportBox from './components/DeviceQueueReportBox';
 import { beamController, ConnectionState } from './controllers/BeamController';
@@ -422,9 +423,10 @@ export default function App() {
             <PayloadFeed workspaceId={activeWorkspace?.workspaceId ?? null} />
           </div>
 
-          {/* Bottom center: seismograph visualization */}
+          {/* Bottom center: seismograph + sysmon visualizations */}
           <div className="overlay-bottom-center">
             <SeismographPanel />
+            <SysmonPanel />
           </div>
         </>
       )}
