@@ -2,14 +2,19 @@ import protobuf from 'protobufjs';
 import { app } from 'electron';
 import path from 'path';
 
-const PROJECT_ROOT = path.resolve(app.getAppPath(), '..');
+// In production app.getAppPath() is Resources/app.asar, so .. → Resources/,
+// where rpc is bundled as beam-cookbook/rpc/. In dev mode it's the project
+// root (examples/beam-ops), so we walk up three levels to the cookbook root.
+const PROTO_ROOT = app.isPackaged
+  ? path.join(path.resolve(app.getAppPath(), '..'), 'beam-cookbook')
+  : path.resolve(app.getAppPath(), '..', '..', '..');
 
 // Maps payload type names to their proto file and fully-qualified message name.
 // IPv4Datagram carries an RPC Envelope from the cookbook. All other types that
 // need deserialization here should use SDK protos from swl-proto.
 const TYPE_PROTO_MAP: Record<string, { file: string; message: string }> = {
   IPv4Datagram: {
-    file: path.join(PROJECT_ROOT, 'beam-cookbook', 'rpc', 'proto', 'rpc.proto'),
+    file: path.join(PROTO_ROOT, 'rpc', 'proto', 'rpc.proto'),
     message: 'somewear.rpc.Envelope',
   },
 };
