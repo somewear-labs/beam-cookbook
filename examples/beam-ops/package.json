@@ -38,7 +38,7 @@
       "artifactName": "${name}_${os}_${arch}.${ext}",
       "extraResources": [
         {
-          "from": "../beam-cookbook/rpc/bin",
+          "from": "../../rpc/bin",
           "to": "beam-cookbook/rpc/bin",
           "filter": ["rpc_darwin_*"]
         },
@@ -62,7 +62,7 @@
       "artifactName": "${name}_${os}_${arch}.${ext}",
       "extraResources": [
         {
-          "from": "../beam-cookbook/rpc/bin",
+          "from": "../../rpc/bin",
           "to": "beam-cookbook/rpc/bin",
           "filter": ["rpc_linux_*"]
         },

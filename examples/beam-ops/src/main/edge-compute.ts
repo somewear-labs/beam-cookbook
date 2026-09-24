@@ -38,7 +38,9 @@ function getRpcBin(): string {
   const fromUserData = path.join(app.getPath('userData'), binName);
   if (existsSync(fromUserData)) return fromUserData;
 
-  return path.join(app.getAppPath(), '..', 'beam-cookbook', 'rpc', 'bin', binName);
+  return app.isPackaged
+    ? path.join(path.resolve(app.getAppPath(), '..'), 'beam-cookbook', 'rpc', 'bin', binName)
+    : path.join(app.getAppPath(), '..', '..', 'rpc', 'bin', binName);
 }
 
 const ANSI_RE = /\x1B\[[0-9;]*[mGKHFJA-Za-z]|\x1B[()][AB01]/g;

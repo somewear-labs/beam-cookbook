@@ -16,8 +16,10 @@ function getRpcBin(): string {
   const fromUserData = path.join(app.getPath('userData'), binName);
   if (existsSync(fromUserData)) return fromUserData;
 
-  // Resources directory: works for properly packaged apps and dev mode.
-  return path.join(app.getAppPath(), '..', 'beam-cookbook', 'rpc', 'bin', binName);
+  // Resources directory for packaged app; two levels up from beam-ops in dev.
+  return app.isPackaged
+    ? path.join(path.resolve(app.getAppPath(), '..'), 'beam-cookbook', 'rpc', 'bin', binName)
+    : path.join(app.getAppPath(), '..', '..', 'rpc', 'bin', binName);
 }
 
 // Kill any leftover rpc binary from a previous session that may still be
