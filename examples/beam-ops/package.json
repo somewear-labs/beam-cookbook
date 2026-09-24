@@ -38,11 +38,6 @@
       "artifactName": "${name}_${os}_${arch}.${ext}",
       "extraResources": [
         {
-          "from": "../../rpc/bin",
-          "to": "beam-cookbook/rpc/bin",
-          "filter": ["rpc_darwin_*"]
-        },
-        {
           "from": "../../sensors/proto/sensors.proto",
           "to": "beam-cookbook/sensors/proto/sensors.proto"
         }
@@ -61,11 +56,6 @@
       "category": "Utility",
       "artifactName": "${name}_${os}_${arch}.${ext}",
       "extraResources": [
-        {
-          "from": "../../rpc/bin",
-          "to": "beam-cookbook/rpc/bin",
-          "filter": ["rpc_linux_*"]
-        },
         {
           "from": "../../sensors/proto/sensors.proto",
           "to": "beam-cookbook/sensors/proto/sensors.proto"
