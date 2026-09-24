@@ -5,7 +5,7 @@ DEVICES_ARM64     := tank@100.68.160.75 jahmelon@100.68.160.77
 DEVICES_MAC_ARM64 := matthewroberts@mac.lan
 BEAM_JAR          := ../beam/app/build/libs/somewear-beam.jar
 
-.PHONY: package-mac package-linux ship ship-local ship-beam-jar clean
+.PHONY: package-mac package-linux ship ship-rpc ship-local ship-beam-jar clean
 
 # Build macOS artifacts (.zip for arm64 and x64). Run on macOS.
 package-mac:
@@ -20,7 +20,7 @@ package-linux:
 # Upload all artifacts and the installer script to GCS.
 # Assumes both package-mac and package-linux have been run (on their
 # respective platforms) and their outputs are present in dist-electron/.
-ship:
+ship: ship-rpc
 	gsutil -m cp -a public-read \
 		dist-electron/$(APP)_mac_arm64.zip \
 		dist-electron/$(APP)_mac_x64.zip \
@@ -29,6 +29,17 @@ ship:
 		"$(GCS_BUCKET)/"
 	gsutil cp -a public-read install-beam-ops.sh "$(GCS_BUCKET)/install-beam-ops.sh"
 	@echo "Published to https://get.somewear.app/atakplugin/"
+
+# Upload rpc binaries and installer to GCS so install-rpc.sh works.
+ship-rpc:
+	gsutil -m cp -a public-read \
+		../../rpc/bin/rpc_darwin_arm64 \
+		../../rpc/bin/rpc_darwin_amd64 \
+		../../rpc/bin/rpc_linux_arm64 \
+		../../rpc/bin/rpc_linux_amd64 \
+		"$(GCS_BUCKET)/"
+	gsutil cp -a public-read ../../rpc/install-rpc.sh "$(GCS_BUCKET)/install-rpc.sh"
+	@echo "rpc published to https://get.somewear.app/atakplugin/"
 
 # Deploy directly to local SSH devices (no GCS required).
 # Also deploys the rpc binary straight into each device's app userData directory.
