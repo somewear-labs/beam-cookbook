@@ -1,25 +1,12 @@
-import { ipcMain, app } from 'electron';
+import { ipcMain } from 'electron';
 import { spawn, execSync, ChildProcess } from 'child_process';
-import { existsSync } from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
 function getRpcBin(): string {
-  const platform = os.platform(); // 'darwin', 'linux', 'win32'
-  const arch = os.arch(); // 'arm64' or 'x64'
-  const osPart = platform === 'win32' ? 'windows' : platform;
-  const archPart = arch === 'arm64' ? 'arm64' : 'amd64';
-  const binName = `rpc_${osPart}_${archPart}`;
-
-  // userData path — binaries deployed here by `make ship-local`, which bypasses
-  // the extraResources cross-compilation bug (Linux AppImages built on macOS).
-  const fromUserData = path.join(app.getPath('userData'), binName);
-  if (existsSync(fromUserData)) return fromUserData;
-
-  // Resources directory for packaged app; two levels up from beam-ops in dev.
-  return app.isPackaged
-    ? path.join(path.resolve(app.getAppPath(), '..'), 'beam-cookbook', 'rpc', 'bin', binName)
-    : path.join(app.getAppPath(), '..', '..', 'rpc', 'bin', binName);
+  // Matches the production install location from install-rpc.sh (downloaded from GCS).
+  // Dev deploy also installs here via `make ship-local`.
+  return path.join(os.homedir(), 'bin', 'rpc');
 }
 
 // Kill any leftover rpc binary from a previous session that may still be

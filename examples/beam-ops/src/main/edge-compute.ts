@@ -1,6 +1,5 @@
 import { ipcMain, app } from 'electron';
 import { spawn, ChildProcess } from 'child_process';
-import { existsSync } from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -29,18 +28,7 @@ function saveConfig(cfg: EdgeConfig): void {
 }
 
 function getRpcBin(): string {
-  const platform = os.platform();
-  const arch = os.arch();
-  const osPart = platform === 'win32' ? 'windows' : platform;
-  const archPart = arch === 'arm64' ? 'arm64' : 'amd64';
-  const binName = `rpc_${osPart}_${archPart}`;
-
-  const fromUserData = path.join(app.getPath('userData'), binName);
-  if (existsSync(fromUserData)) return fromUserData;
-
-  return app.isPackaged
-    ? path.join(path.resolve(app.getAppPath(), '..'), 'beam-cookbook', 'rpc', 'bin', binName)
-    : path.join(app.getAppPath(), '..', '..', 'rpc', 'bin', binName);
+  return path.join(os.homedir(), 'bin', 'rpc');
 }
 
 const ANSI_RE = /\x1B\[[0-9;]*[mGKHFJA-Za-z]|\x1B[()][AB01]/g;

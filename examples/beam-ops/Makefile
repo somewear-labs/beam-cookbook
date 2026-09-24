@@ -41,23 +41,22 @@ ship-local:
 			dist-electron/$(APP)_linux_arm64.AppImage \
 			$$host:~/bin/beam-ops; \
 		ssh $$host "chmod +x ~/bin/beam-ops"; \
-		ssh $$host 'mkdir -p ~/.config/beam-ops'; \
-		ssh $$host 'cat > ~/.config/beam-ops/rpc_linux_arm64 && chmod +x ~/.config/beam-ops/rpc_linux_arm64' \
-			< ../beam-cookbook/rpc/bin/rpc_linux_arm64; \
+		rsync -az ../../rpc/bin/rpc_linux_arm64 $$host:~/bin/rpc; \
+		ssh $$host "chmod +x ~/bin/rpc"; \
 		echo "  done $$host"; \
 	done
 	@for host in $(DEVICES_MAC_ARM64); do \
 		echo "→ deploying to $$host (mac)"; \
 		rsync -az dist-electron/$(APP)_mac_arm64.zip $$host:/tmp/beam-ops.zip; \
 		ssh $$host "unzip -o /tmp/beam-ops.zip -d /Applications && rm /tmp/beam-ops.zip"; \
-		ssh $$host 'mkdir -p ~/Library/Application\ Support/"Beam Ops"'; \
-		ssh $$host 'cat > ~/Library/Application\ Support/"Beam Ops"/rpc_darwin_arm64 && chmod +x ~/Library/Application\ Support/"Beam Ops"/rpc_darwin_arm64' \
-			< ../beam-cookbook/rpc/bin/rpc_darwin_arm64; \
+		rsync -az ../../rpc/bin/rpc_darwin_arm64 $$host:~/bin/rpc; \
+		ssh $$host "chmod +x ~/bin/rpc"; \
 		ssh $$host 'pkill -x "Beam Ops" 2>/dev/null; sleep 1; open "/Applications/Beam Ops.app"'; \
 		echo "  done $$host"; \
 	done
 	@echo "→ deploying locally (mac)"
 	@unzip -o dist-electron/$(APP)_mac_arm64.zip -d /Applications > /dev/null 2>&1; true
+	@mkdir -p ~/bin && cp ../../rpc/bin/rpc_darwin_arm64 ~/bin/rpc && chmod +x ~/bin/rpc
 	@pkill -x "Beam Ops" 2>/dev/null; sleep 1; open "/Applications/Beam Ops.app"
 	@echo "  done local"
 
