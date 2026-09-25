@@ -1,11 +1,17 @@
-APP        := beam-ops
-GCS_BUCKET := gs://get-somewear-app/atakplugin
+APP          := beam-ops
+GCS_BUCKET   := gs://get-somewear-app/atakplugin
+GSUTIL_FLAGS := -h "Cache-Control:no-cache, no-store, must-revalidate"
 
 DEVICES_ARM64     := tank@100.68.160.75 jahmelon@100.68.160.77
 DEVICES_MAC_ARM64 := matthewroberts@mac.lan
-BEAM_JAR          := ../beam/app/build/libs/somewear-beam.jar
+BEAM_JAR          := ../../../beam/app/build/libs/somewear-beam.jar
 
-.PHONY: package-mac package-linux ship ship-rpc ship-local ship-beam-jar clean
+.PHONY: package-mac package-linux ship ship-dev ship-rpc ship-local ship-beam-jar clean
+
+# Build mac artifacts and deploy to all devices. A fast dev iteration loop.
+# Linux devices use the most recent AppImage in dist-electron/; self-build on
+# the device if you need a fresh linux build.
+ship-dev: package-mac ship-local
 
 # Build macOS artifacts (.zip for arm64 and x64). Run on macOS.
 package-mac:
@@ -21,24 +27,24 @@ package-linux:
 # Assumes both package-mac and package-linux have been run (on their
 # respective platforms) and their outputs are present in dist-electron/.
 ship: ship-rpc
-	gsutil -m cp -a public-read \
+	gsutil -m $(GSUTIL_FLAGS) cp -a public-read \
 		dist-electron/$(APP)_mac_arm64.zip \
 		dist-electron/$(APP)_mac_x64.zip \
 		dist-electron/$(APP)_linux_arm64.AppImage \
 		dist-electron/$(APP)_linux_x86_64.AppImage \
+		install-beam-ops.sh \
 		"$(GCS_BUCKET)/"
-	gsutil cp -a public-read install-beam-ops.sh "$(GCS_BUCKET)/install-beam-ops.sh"
 	@echo "Published to https://get.somewear.app/atakplugin/"
 
 # Upload rpc binaries and installer to GCS so install-rpc.sh works.
 ship-rpc:
-	gsutil -m cp -a public-read \
+	gsutil -m $(GSUTIL_FLAGS) cp -a public-read \
 		../../rpc/bin/rpc_darwin_arm64 \
 		../../rpc/bin/rpc_darwin_amd64 \
 		../../rpc/bin/rpc_linux_arm64 \
 		../../rpc/bin/rpc_linux_amd64 \
+		../../rpc/install-rpc.sh \
 		"$(GCS_BUCKET)/"
-	gsutil cp -a public-read ../../rpc/install-rpc.sh "$(GCS_BUCKET)/install-rpc.sh"
 	@echo "rpc published to https://get.somewear.app/atakplugin/"
 
 # Deploy directly to local SSH devices (no GCS required).
