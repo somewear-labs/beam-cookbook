@@ -79,11 +79,37 @@ func TestParseWebhookEnvelopesPreservesRoutingMetadata(t *testing.T) {
 		payload,
 	))
 
-	got := parseWebhookEnvelopesWithSender(body)
+	got := parseWebhookEnvelopes(body)
 	if len(got) != 1 {
-		t.Fatalf("parseWebhookEnvelopesWithSender() returned %d envelopes", len(got))
+		t.Fatalf("parseWebhookEnvelopes() returned %d envelopes", len(got))
 	}
-	if got[0].SourceUserID != 383626 {
-		t.Fatalf("SourceUserID = %d, want 383626", got[0].SourceUserID)
+	if got[0].sourceUserID != 383626 {
+		t.Fatalf("sourceUserID = %d, want 383626", got[0].sourceUserID)
+	}
+}
+
+func TestParseGridDatagramWebhookPreservesApplicationProto(t *testing.T) {
+	payload, err := marshalEnvelope(&rpcpb.Envelope{
+		RequestId: 9,
+		Payload: &rpcpb.Envelope_Request{Request: &rpcpb.RpcRequest{
+			Method: &rpcpb.RpcRequest_Ping{Ping: &rpcpb.PingRequest{ClientSendUnixMillis: 123}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(fmt.Sprintf(
+		`{"payloads":[{"account":{"id":"383626"},"events":[{"type":"GridDatagram","data":%q,"datagramId":{"timestamp":"2026-08-24T15:56:31Z","sourceUserId":"383626","sequence":2},"inResponseTo":{"timestamp":"2026-08-24T15:55:00Z","sourceUserId":"99","sequence":1},"timestamp":"2026-08-24T15:56:31Z"}]}]}`,
+		payload,
+	))
+
+	got := parseWebhookEnvelopes(body)
+	if len(got) != 1 || got[0].envelope.GetRequestId() != 9 ||
+		got[0].envelope.GetRequest().GetPing().GetClientSendUnixMillis() != 123 {
+		t.Fatalf("GridDatagram webhook = %+v", got)
+	}
+	if got[0].datagramID == nil || got[0].datagramID.SourceUserID != "383626" ||
+		got[0].inResponseTo == nil || got[0].inResponseTo.SourceUserID != "99" {
+		t.Fatalf("GridDatagram routing metadata = %+v", got[0])
 	}
 }
