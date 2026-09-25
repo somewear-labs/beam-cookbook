@@ -308,11 +308,17 @@ export function setupBeamHandlers(): void {
     _satTails.delete(event.sender.id);
   });
 
-  ipcMain.on('beam:tail-queue-report', (event) => {
+  ipcMain.on('beam:tail-queue-report', async (event) => {
     const id = event.sender.id;
     _queueReportTails.get(id)?.abort();
     const ctrl = new AbortController();
     _queueReportTails.set(id, ctrl);
+
+    // Emit the current snapshot immediately — the SSE stream only pushes on changes.
+    try {
+      const snapshot = await beamFetch('/api/device/queue-report/tail?format=json');
+      if (!event.sender.isDestroyed()) event.sender.send('beam:queue-report-event', snapshot);
+    } catch { /* beam not ready yet; SSE will catch up */ }
 
     sseLoop('/api/device/queue-report/tail', ctrl, (report) => {
       if (!event.sender.isDestroyed()) event.sender.send('beam:queue-report-event', report);

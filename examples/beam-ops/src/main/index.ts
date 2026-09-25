@@ -13,8 +13,11 @@ import { setupEdgeComputeHandlers, stopEdgeCompute } from './edge-compute';
 const MBTILES_PATH = join(app.getAppPath(), 'tiles', 'hood-river.mbtiles');
 
 // ─── Mapbox token ─────────────────────────────────────────────────────────────
-// Checks (in order): process env, shell rc files, gradle.properties.
+// __MAPBOX_TOKEN__ is baked in at build time via Vite define (electron.vite.config.ts).
+// Falls back to runtime sources so dev builds without the env var still work.
 // MAPBOX_DOWNLOADS_TOKEN (sk.*) is download-scoped and won't work for tile API calls.
+declare const __MAPBOX_TOKEN__: string;
+
 function readShellExport(key: string): string | null {
   const files = ['.zshenv', '.zprofile', '.zshrc', '.profile', '.bash_profile', '.bashrc'];
   const re = new RegExp(`^export\\s+${key}\\s*=\\s*(.+)$`, 'm');
@@ -35,6 +38,7 @@ function readShellExport(key: string): string | null {
 }
 
 function readMapboxToken(): string | null {
+  if (__MAPBOX_TOKEN__) return __MAPBOX_TOKEN__;
   if (process.env.MAPBOX_ACCESS_TOKEN) return process.env.MAPBOX_ACCESS_TOKEN;
   const fromShell = readShellExport('MAPBOX_ACCESS_TOKEN');
   if (fromShell) return fromShell;
@@ -142,12 +146,15 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') {
+    app.quit();
+  }
+});
+
+app.on('will-quit', () => {
   stopRpc();
   stopBeamHandlers();
   stopEdgeCompute();
   stopTileServer();
   closeLayerStore();
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
 });

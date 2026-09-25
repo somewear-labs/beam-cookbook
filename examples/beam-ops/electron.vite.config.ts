@@ -4,7 +4,10 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()]
+    plugins: [externalizeDepsPlugin()],
+    define: {
+      __MAPBOX_TOKEN__: JSON.stringify(process.env.MAPBOX_ACCESS_TOKEN ?? '')
+    }
   },
   preload: {
     plugins: [externalizeDepsPlugin()]

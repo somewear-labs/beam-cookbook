@@ -18,22 +18,46 @@ case "$OS-$ARCH" in
         ;;
 esac
 
+# Use a system PATH location when running as root (e.g. via install-somewear.sh),
+# otherwise fall back to ~/bin and add it to the shell profile.
+if [ "$EUID" -eq 0 ]; then
+    LAUNCHER_DIR="/usr/local/bin"
+    REAL_USER="${SUDO_USER:-$USER}"
+    REAL_HOME=$(eval echo "~$REAL_USER")
+else
+    LAUNCHER_DIR="$HOME/bin"
+    REAL_HOME="$HOME"
+fi
+mkdir -p "$LAUNCHER_DIR"
+
 echo "Downloading $FILE..."
 
 if [ "$PLATFORM" = "mac" ]; then
     curl -fsSL "$BASE_URL/$FILE" -o /tmp/beam-ops.zip
-    unzip -o /tmp/beam-ops.zip "Beam Ops.app" -d /Applications
+    unzip -o /tmp/beam-ops.zip -d /Applications > /dev/null 2>&1; true
     rm /tmp/beam-ops.zip
     echo "Installed to /Applications/Beam Ops.app"
+
+    cat > "$LAUNCHER_DIR/beam-ops" << 'EOF'
+#!/bin/sh
+open "/Applications/Beam Ops.app" "$@"
+EOF
+    chmod +x "$LAUNCHER_DIR/beam-ops"
+    echo "Installed beam-ops launcher to $LAUNCHER_DIR/beam-ops"
 else
-    INSTALL_DIR="$HOME/bin"
-    mkdir -p "$INSTALL_DIR"
-    curl -fsSL "$BASE_URL/$FILE" -o "$INSTALL_DIR/beam-ops"
-    chmod +x "$INSTALL_DIR/beam-ops"
-    echo "Installed beam-ops to $INSTALL_DIR/beam-ops"
-    if ! echo "$PATH" | grep -q "$INSTALL_DIR"; then
-        echo ""
-        echo "Add $INSTALL_DIR to your PATH:"
-        echo "  echo 'export PATH=\"\$HOME/bin:\$PATH\"' >> ~/.bashrc && source ~/.bashrc"
+    curl -fsSL "$BASE_URL/$FILE" -o "$LAUNCHER_DIR/beam-ops"
+    chmod +x "$LAUNCHER_DIR/beam-ops"
+    echo "Installed beam-ops to $LAUNCHER_DIR/beam-ops"
+fi
+
+if ! echo "$PATH" | grep -q "$LAUNCHER_DIR"; then
+    case "$OS" in
+        Darwin) PROFILE="$REAL_HOME/.zshrc" ;;
+        *)      PROFILE="$REAL_HOME/.bashrc" ;;
+    esac
+    if ! grep -q 'HOME/bin' "$PROFILE" 2>/dev/null; then
+        echo "" >> "$PROFILE"
+        echo 'export PATH="$HOME/bin:$PATH"' >> "$PROFILE"
+        echo "Added \$HOME/bin to PATH in $PROFILE — run: source $PROFILE"
     fi
 fi
