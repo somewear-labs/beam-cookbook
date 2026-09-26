@@ -16,7 +16,13 @@ Applications send their serialized payload to Beam in a JSON API request:
 
 The client helpers build four patterns on Beam's generic API. `Request` sends a direct datagram and waits for the first correlated response. `Broadcast` sends without a target, and `Responses` collects correlated replies. `Respond` sends a datagram whose `inResponseTo` identifies the request; Beam derives the return address from that ID. All sends use `/api/datagrams`, and response collection uses `/api/datagrams/responses`.
 
-Ping and discovery use this API. Connect and exec still use the cookbook's legacy protobuf envelope over IPv4Datagram while the experiment migrates incrementally.
+Ping, discovery, connect, exec, and streaming commands use this API.
+
+`/watch` repeats `beam status` on the target. `/seismograph` starts the cookbook's
+sensor simulator there and returns each protobuf reading. The shell keeps a
+response collector open for each stream and prints its key. Use `/close KEY` to
+stop one. Readings use GridDatagram's replaceable `streamKey`; the close command
+and terminal response use key zero so they cannot replace a queued reading.
 
 ## Network setup
 
@@ -48,29 +54,22 @@ beam config set webhook-address http://localhost:8081
 
 Then restart the Beam daemon if it is already running.
 
-### 3. Configure Beam webhook on the local machine
-
-The local Beam daemon must forward response packets to `rpc shell`. Use the same port you'll pass to `--webhook-port` (default 8080):
-
-```bash
-beam config set webhook-address http://localhost:8080
-```
-
-### 4. Start `rpc server` on the remote machine
+### 3. Start `rpc server` on the remote machine
 
 ```bash
 ./rpc server --port 8081
 ```
 
-`--port` must match the webhook address you set in step 2.
+`--port` must match the remote webhook address.
 
-### 5. Start `rpc shell` on the local machine
+### 4. Start `rpc shell` on the local machine
 
 ```bash
-./rpc shell --webhook-port 8080 --target-user 384899
+./rpc shell --target-user 384899
 ```
 
-`--webhook-port` must match the webhook address you set in step 3.
+The shell collects replies through the local Beam API; it does not need a local webhook.
+For one-shot sends, select a workspace in Beam first; `--workspace` cannot override GridDatagram routing.
 
 ---
 
@@ -82,16 +81,32 @@ beam config set webhook-address http://localhost:8080
 ./rpc server --port 8081 --max-response 500
 ```
 
+For `/seismograph`, install the sensor binary on the remote machine's `PATH`:
+
+```bash
+cd ../sensors
+go build -o bin/seismograph ./cmd/seismograph
+export PATH="$PWD/bin:$PATH"
+```
+
 ### Local machine — interactive shell
 ```bash
-./rpc shell --webhook-port 8080 --target-user 384899
-./rpc shell --webhook-port 8080 --target-user 384899 --timeout 30s
+./rpc shell --target-user 384899
+./rpc shell --target-user 384899 --timeout 30s
+```
+
+Inside the shell:
+
+```text
+/watch 2s
+/seismograph 5s
+/close KEY
 ```
 
 ### Local machine — one-shot send
 ```bash
-./rpc send --target-user 384899 "uptime"
-./rpc send --target-user 384899 "df -h"
+./rpc send --target-user-id 384899 "uptime"
+./rpc send --target-user-id 384899 "df -h"
 ```
 
 ## Supported platforms
@@ -134,7 +149,6 @@ Requires Go 1.22+ and (for `make proto`) `protoc` with `protoc-gen-go`.
 |------|---------|-------------|
 | `--beam-url` | `http://localhost:9091` | Beam REST API |
 | `--port` *(server)* | `9091` | Beam webhook port on remote |
-| `--webhook-port` *(shell)* | `8080` | Local port for receiving responses |
 | `--max-response` *(server)* | `200` | Stdout truncation limit in bytes |
 | `--timeout` *(shell)* | `30s` | Response wait timeout |
 

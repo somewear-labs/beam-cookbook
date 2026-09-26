@@ -62,6 +62,8 @@ type rpcServer struct {
 	cwdMu       sync.Mutex
 	discoveryMu sync.Mutex
 	discoveries map[discoveryKey]time.Time
+	streamsMu   sync.Mutex
+	streams     map[streamSessionKey]*streamSession
 }
 
 type discoveryKey struct {
@@ -95,17 +97,21 @@ func (s *rpcServer) handleRequest(env *rpcpb.Envelope, sourceUserID int64, recei
 	req := env.GetRequest()
 	switch req.Method.(type) {
 	case *rpcpb.RpcRequest_Exec:
-		s.handleExec(env.RequestId, sourceUserID, req.GetExec())
+		s.handleExec(env.RequestId, sourceUserID, req.GetExec(), requestDatagramID)
 	case *rpcpb.RpcRequest_Connect:
-		s.handleConnect(env.RequestId, sourceUserID)
+		s.handleConnect(env.RequestId, sourceUserID, requestDatagramID)
 	case *rpcpb.RpcRequest_Discover:
 		if s.acceptDiscovery(sourceUserID, env.RequestId) {
 			go s.handleDiscover(env.RequestId, sourceUserID, req.GetDiscover(), requestDatagramID)
 		}
 	case *rpcpb.RpcRequest_Ping:
 		s.handlePing(env.RequestId, sourceUserID, receivedAt, requestDatagramID)
+	case *rpcpb.RpcRequest_StreamStart:
+		s.startStream(env.RequestId, sourceUserID, req.GetStreamStart(), requestDatagramID)
+	case *rpcpb.RpcRequest_StreamClose:
+		s.closeStream(env.RequestId, sourceUserID, req.GetStreamClose(), requestDatagramID)
 	default:
-		s.sendError(env.RequestId, sourceUserID, fmt.Sprintf("unknown method: %T", req.Method))
+		s.sendError(env.RequestId, sourceUserID, fmt.Sprintf("unknown method: %T", req.Method), requestDatagramID)
 	}
 }
 
@@ -191,7 +197,7 @@ func (s *rpcServer) sendResponse(requestDatagramID *beamDatagramID, targetUserID
 	return sendIPv4(s.beamURL, s.workspaceID, targetUserID, data)
 }
 
-func (s *rpcServer) handleExec(reqID uint32, targetUserID int64, req *rpcpb.ExecRequest) {
+func (s *rpcServer) handleExec(reqID uint32, targetUserID int64, req *rpcpb.ExecRequest, requestDatagramID *beamDatagramID) {
 	s.cwdMu.Lock()
 	cwd := s.cwd
 	s.cwdMu.Unlock()
@@ -259,7 +265,7 @@ func (s *rpcServer) handleExec(reqID uint32, targetUserID int64, req *rpcpb.Exec
 		fmt.Fprintln(os.Stderr, "  Failed to marshal response:", err)
 		return
 	}
-	if err := sendIPv4(s.beamURL, s.workspaceID, targetUserID, b64); err != nil {
+	if err := s.sendResponse(requestDatagramID, targetUserID, b64); err != nil {
 		fmt.Fprintln(os.Stderr, "  Failed to send response:", err)
 		return
 	}
@@ -279,7 +285,7 @@ func truncateResponse(out []byte, maxBytes int) ([]byte, bool) {
 	return bytes.ToValidUTF8(out, nil), truncated
 }
 
-func (s *rpcServer) handleConnect(reqID uint32, targetUserID int64) {
+func (s *rpcServer) handleConnect(reqID uint32, targetUserID int64, requestDatagramID *beamDatagramID) {
 	hostname, _ := os.Hostname()
 
 	var ips []string
@@ -330,7 +336,7 @@ func (s *rpcServer) handleConnect(reqID uint32, targetUserID int64) {
 		fmt.Fprintln(os.Stderr, "  Failed to marshal connect response:", err)
 		return
 	}
-	if err := sendIPv4(s.beamURL, s.workspaceID, targetUserID, b64); err != nil {
+	if err := s.sendResponse(requestDatagramID, targetUserID, b64); err != nil {
 		fmt.Fprintln(os.Stderr, "  Failed to send connect response:", err)
 	}
 }
@@ -370,7 +376,7 @@ func collectCPUInfo() (arch, model string) {
 	return arch, ""
 }
 
-func (s *rpcServer) sendError(reqID uint32, targetUserID int64, message string) {
+func (s *rpcServer) sendError(reqID uint32, targetUserID int64, message string, requestDatagramID *beamDatagramID) {
 	resp := &rpcpb.Envelope{
 		RequestId: reqID,
 		Payload: &rpcpb.Envelope_Response{
@@ -385,5 +391,5 @@ func (s *rpcServer) sendError(reqID uint32, targetUserID int64, message string) 
 	if err != nil {
 		return
 	}
-	sendIPv4(s.beamURL, s.workspaceID, targetUserID, b64)
+	s.sendResponse(requestDatagramID, targetUserID, b64)
 }

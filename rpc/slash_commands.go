@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 
@@ -13,6 +14,8 @@ type shellSlashCommands struct {
 	stdout io.Writer
 	stderr io.Writer
 	ping   func()
+	start  func(rpcpb.StreamStart_Kind, time.Duration) error
+	close  func(uint32) error
 }
 
 func (c shellSlashCommands) handle(command string) bool {
@@ -30,6 +33,9 @@ func (c shellSlashCommands) handle(command string) bool {
 		}
 		fmt.Fprintln(c.stdout, "Grid Remote Shell commands:")
 		fmt.Fprintln(c.stdout, "  /ping                Measure a Grid round trip to the selected target")
+		fmt.Fprintln(c.stdout, "  /watch [interval]    Stream target Beam status (default 2s)")
+		fmt.Fprintln(c.stdout, "  /seismograph [interval]  Stream target sensor readings (default 5s)")
+		fmt.Fprintln(c.stdout, "  /close KEY           Stop a stream")
 		fmt.Fprintln(c.stdout, "  /help                Show this help")
 		fmt.Fprintln(c.stdout, "  exit, quit           Close the shell")
 	case "/ping":
@@ -39,6 +45,37 @@ func (c shellSlashCommands) handle(command string) bool {
 		}
 		if c.ping != nil {
 			c.ping()
+		}
+	case "/watch", "/seismograph":
+		interval := 2 * time.Second
+		kind := rpcpb.StreamStart_WATCH_BEAM
+		if strings.EqualFold(name, "/seismograph") {
+			interval = 5 * time.Second
+			kind = rpcpb.StreamStart_SEISMOGRAPH
+		}
+		if arguments != "" {
+			parsed, err := time.ParseDuration(arguments)
+			if err != nil {
+				fmt.Fprintln(c.stderr, "usage: /watch [interval] or /seismograph [interval]")
+				return true
+			}
+			interval = parsed
+		}
+		if c.start != nil {
+			if err := c.start(kind, interval); err != nil {
+				fmt.Fprintln(c.stderr, "[stream error]", err)
+			}
+		}
+	case "/close":
+		key, err := strconv.ParseUint(arguments, 10, 32)
+		if err != nil || key == 0 {
+			fmt.Fprintln(c.stderr, "usage: /close KEY")
+			return true
+		}
+		if c.close != nil {
+			if err := c.close(uint32(key)); err != nil {
+				fmt.Fprintln(c.stderr, "[close error]", err)
+			}
 		}
 	default:
 		fmt.Fprintf(c.stderr, "unknown Grid Remote Shell command: %s (try /help)\n", name)

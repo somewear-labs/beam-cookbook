@@ -24,12 +24,14 @@ type beamDatagram struct {
 	Data         string          `json:"data"`
 	DatagramID   beamDatagramID  `json:"datagramId"`
 	InResponseTo *beamDatagramID `json:"inResponseTo,omitempty"`
+	StreamKey    uint32          `json:"streamKey,omitempty"`
 }
 
 type beamDatagramRequest struct {
 	Data         string          `json:"data"`
 	TargetUserID string          `json:"targetUserId,omitempty"`
 	InResponseTo *beamDatagramID `json:"inResponseTo,omitempty"`
+	StreamKey    uint32          `json:"streamKey,omitempty"`
 }
 
 type beamDatagramResult struct {
@@ -82,8 +84,17 @@ func respondWithBeamDatagram(beamURL string, requestID beamDatagramID, data stri
 	return err
 }
 
+func respondWithBeamStream(beamURL string, requestID beamDatagramID, streamKey uint32, data string) error {
+	_, err := sendBeamDatagramWithStream(beamURL, 0, data, &requestID, streamKey)
+	return err
+}
+
 func sendBeamDatagram(beamURL string, targetUserID int64, data string, inResponseTo *beamDatagramID) (beamDatagramID, error) {
-	request := beamDatagramRequest{Data: data, InResponseTo: inResponseTo}
+	return sendBeamDatagramWithStream(beamURL, targetUserID, data, inResponseTo, 0)
+}
+
+func sendBeamDatagramWithStream(beamURL string, targetUserID int64, data string, inResponseTo *beamDatagramID, streamKey uint32) (beamDatagramID, error) {
+	request := beamDatagramRequest{Data: data, InResponseTo: inResponseTo, StreamKey: streamKey}
 	if targetUserID != 0 {
 		request.TargetUserID = fmt.Sprint(targetUserID)
 	}

@@ -4,12 +4,9 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
-	"io"
-	"log"
-	"net/http"
 	"os"
+	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	rpcpb "somewear/rpc/proto"
@@ -17,7 +14,7 @@ import (
 
 func runShell(args []string) {
 	fs := flag.NewFlagSet("shell", flag.ExitOnError)
-	webhookPort := fs.Int("webhook-port", 8080, "Port to receive webhook responses on")
+	fs.Int("webhook-port", 8080, "Deprecated; GridDatagram shell does not use a local webhook")
 	targetUser := fs.Int64("target-user", 0, "Target Beam user account ID")
 	timeout := fs.Duration("timeout", 30*time.Second, "How long to wait for a response")
 	discoveryTimeout := fs.Duration("discovery-timeout", 5*time.Second, "How long to collect discovery responses")
@@ -30,32 +27,7 @@ func runShell(args []string) {
 		return
 	}
 
-	var nextID atomic.Uint32
-	var pendingID atomic.Uint32
-	var expectedSource atomic.Int64
-	responses := make(chan inboundEnvelope, 64)
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		w.WriteHeader(http.StatusOK)
-		for _, inbound := range parseWebhookEnvelopes(body) {
-			env := inbound.envelope
-			if env.GetResponse() != nil && env.RequestId == pendingID.Load() &&
-				(expectedSource.Load() == 0 || inbound.sourceUserID == expectedSource.Load()) {
-				responses <- inbound
-			}
-		}
-	})
-
-	go func() {
-		if err := http.ListenAndServe(fmt.Sprintf(":%d", *webhookPort), mux); err != nil {
-			fmt.Fprintln(os.Stderr, "webhook server error:", err)
-			os.Exit(1)
-		}
-	}()
-
-	fmt.Printf("Somewear remote shell — Beam active workspace %d, webhook :%d\n", workspaceID, *webhookPort)
+	fmt.Printf("Somewear remote shell — Beam active workspace %d\n", workspaceID)
 	selectedUser := *targetUser
 	if selectedUser == 0 {
 		if *discoveryTimeout <= 0 {
@@ -102,18 +74,22 @@ func runShell(args []string) {
 		fmt.Fprintln(os.Stderr, "shell: target account must be greater than zero")
 		return
 	}
-	expectedSource.Store(selectedUser)
-
 	fmt.Println("Ctrl-C or 'exit' to quit.")
 	fmt.Println()
 
-	doConnect(*beamURL, workspaceID, selectedUser, *timeout, &nextID, &pendingID, responses)
+	if !doConnect(*beamURL, selectedUser, *timeout) {
+		return
+	}
+	streams := &streamClient{beamURL: *beamURL, targetUserID: selectedUser, stdout: os.Stdout, stderr: os.Stderr}
+	defer streams.closeAll()
 	slashCommands := shellSlashCommands{
 		stdout: os.Stdout,
 		stderr: os.Stderr,
 		ping: func() {
 			doPing(*beamURL, selectedUser, *timeout, os.Stdout, os.Stderr, requestBeamDatagram)
 		},
+		start: streams.start,
+		close: streams.close,
 	}
 
 	scanner := bufio.NewScanner(os.Stdin)
@@ -134,11 +110,8 @@ func runShell(args []string) {
 			continue
 		}
 
-		id := nextID.Add(1)
-		pendingID.Store(id)
-
 		env := &rpcpb.Envelope{
-			RequestId: id,
+			RequestId: randomRequestID(),
 			Payload: &rpcpb.Envelope_Request{
 				Request: &rpcpb.RpcRequest{
 					Method: &rpcpb.RpcRequest_Exec{
@@ -147,17 +120,6 @@ func runShell(args []string) {
 				},
 			},
 		}
-
-		b64, err := marshalEnvelope(env)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "[encode error]", err)
-			continue
-		}
-		if err := sendIPv4(*beamURL, workspaceID, selectedUser, b64); err != nil {
-			fmt.Fprintln(os.Stderr, "[send error]", err)
-			continue
-		}
-		log.Printf("[exec] send ok — waiting up to %s", *timeout)
 
 		start := time.Now()
 		stopTicker := make(chan struct{})
@@ -174,21 +136,14 @@ func runShell(args []string) {
 			}
 		}()
 
-		select {
-		case resp := <-responses:
-			close(stopTicker)
-			elapsed := time.Since(start)
-			log.Printf("[exec] response received for req_id=%d in %.2fs", id, elapsed.Seconds())
-			fmt.Printf("\r  %.2fs\n", elapsed.Seconds())
-			printResponse(resp.envelope)
-		case <-time.After(*timeout):
-			close(stopTicker)
-			log.Printf("[exec] timed out waiting for req_id=%d after %s", id, *timeout)
-			fmt.Printf("\r  %.2fs — [no response]\n", time.Since(start).Seconds())
+		response, err := requestRPC(*beamURL, selectedUser, env, *timeout)
+		close(stopTicker)
+		fmt.Printf("\r  %.2fs\n", time.Since(start).Seconds())
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "[command error]", err)
+			continue
 		}
-		// Clear pendingID so Beam webhook retries between commands don't
-		// queue a stale response for the next command's select.
-		pendingID.Store(0)
+		printResponse(response)
 	}
 }
 
@@ -233,13 +188,9 @@ const (
 	colorBlue   = "\033[34m"
 )
 
-func doConnect(beamURL string, workspace int, targetUserID int64, timeout time.Duration, nextID, pendingID *atomic.Uint32, responses chan inboundEnvelope) {
-	id := nextID.Add(1)
-	pendingID.Store(id)
-	defer pendingID.Store(0)
-
+func doConnect(beamURL string, targetUserID int64, timeout time.Duration) bool {
 	env := &rpcpb.Envelope{
-		RequestId: id,
+		RequestId: randomRequestID(),
 		Payload: &rpcpb.Envelope_Request{
 			Request: &rpcpb.RpcRequest{
 				Method: &rpcpb.RpcRequest_Connect{
@@ -248,30 +199,42 @@ func doConnect(beamURL string, workspace int, targetUserID int64, timeout time.D
 			},
 		},
 	}
-	b64, err := marshalEnvelope(env)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "[connect encode error]", err)
-		return
-	}
-	if err := sendIPv4(beamURL, workspace, targetUserID, b64); err != nil {
-		fmt.Fprintln(os.Stderr, "[connect send error]", err)
-		return
-	}
-	log.Printf("[connect] send ok — waiting up to %s for webhook response", timeout)
-
 	fmt.Printf("%s%sconnecting...%s", colorDim, colorCyan, colorReset)
-
-	select {
-	case resp := <-responses:
-		log.Printf("[connect] response received")
-		fmt.Print("\r\033[K") // clear the "connecting..." line
-		if c := resp.envelope.GetResponse().GetConnect(); c != nil {
-			printConnectBanner(c)
-		}
-	case <-time.After(timeout):
-		log.Printf("[connect] timed out after %s — no response", timeout)
-		fmt.Printf("\r\033[K%s[no response — is the server running?]%s\n\n", colorYellow, colorReset)
+	response, err := requestRPC(beamURL, targetUserID, env, timeout)
+	fmt.Print("\r\033[K")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "[connect error]", err)
+		return false
 	}
+	connect := response.GetResponse().GetConnect()
+	if connect == nil {
+		fmt.Fprintln(os.Stderr, "[connect error] target returned an unexpected response")
+		return false
+	}
+	printConnectBanner(connect)
+	return true
+}
+
+func requestRPC(beamURL string, targetUserID int64, request *rpcpb.Envelope, timeout time.Duration) (*rpcpb.Envelope, error) {
+	data, err := marshalEnvelope(request)
+	if err != nil {
+		return nil, fmt.Errorf("encode request: %w", err)
+	}
+	response, err := requestBeamDatagram(beamURL, targetUserID, data, timeout)
+	if err != nil {
+		return nil, err
+	}
+	if response.DatagramID.SourceUserID != strconv.FormatInt(targetUserID, 10) {
+		return nil, fmt.Errorf("response came from unexpected account %s", response.DatagramID.SourceUserID)
+	}
+	envelope, err := gridDatagramEnvelope(webhookEvent{Data: response.Data})
+	if err != nil {
+		return nil, err
+	}
+	if envelope.GetRequestId() != request.GetRequestId() || envelope.GetResponse() == nil {
+		return nil, fmt.Errorf("response did not match request")
+	}
+	return envelope, nil
 }
 
 func printConnectBanner(c *rpcpb.ConnectResponse) {

@@ -7,6 +7,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"flag"
 	"fmt"
 	"math"
@@ -313,12 +314,31 @@ func run(beamURL string, workspaceID int, interval time.Duration, verbose bool) 
 	}
 }
 
+func runStdout(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for range ticker.C {
+		reading, _ := generateReading()
+		data, err := proto.Marshal(reading)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			continue
+		}
+		fmt.Println(base64.StdEncoding.EncodeToString(data))
+	}
+}
+
 func main() {
 	url := flag.String("url", shared.DefaultBeamURL, "Beam API URL")
 	interval := flag.Duration("interval", 5*time.Second, "Posting interval")
 	workspace := flag.Int("workspace", shared.DefaultWorkspaceID, "Workspace ID")
 	verbose := flag.Bool("verbose", false, "Print each payload before sending")
+	stdoutProto := flag.Bool("stdout-proto", false, "Write base64 protobuf readings to stdout")
 	flag.Parse()
 
+	if *stdoutProto {
+		runStdout(*interval)
+		return
+	}
 	run(*url, *workspace, *interval, *verbose)
 }
