@@ -28,7 +28,13 @@ chmod +x "$INSTALL_DIR/rpc"
 echo "Installed rpc to $INSTALL_DIR/rpc"
 
 if ! echo "$PATH" | grep -q "$INSTALL_DIR"; then
-    echo ""
-    echo "Add $INSTALL_DIR to your PATH:"
-    echo "  echo 'export PATH=\"\$HOME/bin:\$PATH\"' >> ~/.bashrc && source ~/.bashrc"
+    case "$(uname -s)" in
+        Darwin) PROFILE="$HOME/.zshrc" ;;
+        *)      PROFILE="$HOME/.bashrc" ;;
+    esac
+    if ! grep -q 'HOME/bin' "$PROFILE" 2>/dev/null; then
+        echo "" >> "$PROFILE"
+        echo 'export PATH="$HOME/bin:$PATH"' >> "$PROFILE"
+        echo "Added $INSTALL_DIR to PATH in $PROFILE — run: export PATH=\"\$HOME/bin:\$PATH\""
+    fi
 fi
