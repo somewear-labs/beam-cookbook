@@ -1,7 +1,7 @@
 BINARY    := rpc
 GO        := go
 GOFLAGS   := -trimpath
-GIT_HASH  := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+GIT_HASH  := $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
 LDFLAGS   := -ldflags "-X main.buildVersion=$(GIT_HASH)"
 
 .PHONY: build build-all build-linux push clean proto

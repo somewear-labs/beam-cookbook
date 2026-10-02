@@ -79,6 +79,15 @@ beam config set webhook-address http://localhost:8080
 
 ## Usage
 
+Print the commit hash baked into the binary:
+
+```bash
+./rpc --version
+```
+
+Build with `make build` or `make build-all` to inject the current Git commit.
+Builds made directly with `go build` report `unknown`.
+
 ### Remote machine
 ```bash
 ./rpc server --port 8081 --workspace 39054

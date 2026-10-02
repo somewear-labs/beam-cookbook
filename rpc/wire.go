@@ -162,8 +162,18 @@ func fetchUserIDFromPayloads(beamURL, direction, field string) int64 {
 // WebhookEnvelope pairs a decoded Envelope with the user ID of whoever sent it
 // (0 if the packet came from a workspace broadcast rather than a direct user).
 type WebhookEnvelope struct {
-	Envelope     *rpcpb.Envelope
-	SourceUserID int64
+	Envelope      *rpcpb.Envelope
+	SourceUserID  int64
+	PackageSentAt time.Time
+	ReceivedAt    time.Time
+}
+
+// inboundEnvelope carries the routing and timing metadata used by the shell and server.
+type inboundEnvelope struct {
+	envelope      *rpcpb.Envelope
+	sourceUserID  int64
+	packageSentAt time.Time
+	receivedAt    time.Time
 }
 
 // parseWebhookEnvelopesWithSender extracts Envelope protos from a Beam webhook
@@ -217,18 +227,31 @@ func parseWebhookEnvelopesWithSender(body []byte) []*WebhookEnvelope {
 				fmt.Printf("  Ignoring non-RPC IPv4Datagram (namespace=%q)\n", env.Namespace)
 				continue
 			}
-			out = append(out, &WebhookEnvelope{Envelope: env, SourceUserID: sourceUserID})
+			packageSentAt, _ := time.Parse(time.RFC3339Nano, event.Timestamp)
+			out = append(out, &WebhookEnvelope{
+				Envelope: env, SourceUserID: sourceUserID,
+				PackageSentAt: packageSentAt, ReceivedAt: time.Now(),
+			})
 		}
 	}
 	return out
 }
 
-// parseWebhookEnvelopes extracts only the Envelope protos, discarding sender metadata.
-func parseWebhookEnvelopes(body []byte) []*rpcpb.Envelope {
+// parseWebhookEnvelopes extracts decoded envelopes with sender and timing metadata.
+func parseWebhookEnvelopes(body []byte) []inboundEnvelope {
 	wes := parseWebhookEnvelopesWithSender(body)
-	out := make([]*rpcpb.Envelope, len(wes))
+	out := make([]inboundEnvelope, len(wes))
 	for i, we := range wes {
-		out[i] = we.Envelope
+		out[i] = inboundEnvelope{
+			envelope: we.Envelope, sourceUserID: we.SourceUserID,
+			packageSentAt: we.PackageSentAt, receivedAt: we.ReceivedAt,
+		}
 	}
 	return out
+}
+
+// sendIPv4To sends an IPv4 datagram to a specific workspace member, or broadcasts
+// to the workspace when targetUserID is zero.
+func sendIPv4To(beamURL string, workspaceID int, targetUserID int64, b64payload string) error {
+	return sendIPv4(beamURL, workspaceID, targetUserID, b64payload)
 }

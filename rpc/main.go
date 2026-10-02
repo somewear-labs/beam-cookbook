@@ -5,6 +5,9 @@ import (
 	"os"
 )
 
+// buildVersion is set by the Makefile at link time from the current Git commit.
+var buildVersion = "unknown"
+
 const usage = `usage: rpc <command> [options]
 
 Commands:
@@ -23,6 +26,8 @@ func main() {
 	}
 
 	switch os.Args[1] {
+	case "--version", "-version", "version":
+		fmt.Printf("rpc %s\n", buildVersion)
 	case "server":
 		runServer(os.Args[2:])
 	case "nmap":
