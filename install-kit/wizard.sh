@@ -104,7 +104,7 @@ firmware_zip="${firmware_releases[0]}/${hardware}-${firmware_release}.zip"
 [[ -f "$firmware_zip" ]] || die "No firmware ZIP for $hardware"
 printf '\nNode %s: selected hardware %s\n' "$serial" "$hardware"
 if [[ -x "$beam_bin" ]]; then printf 'Existing Beam launcher: %s\n' "$beam_bin"; fi
-printf 'Sequence: install Beam, authenticate, choose workspace, DFU, apply USB lock, power on and register Node, beam up.\n'
+printf 'Sequence: install Beam, authenticate, choose workspace, DFU, apply USB lock, beam up, power on and register Node.\n'
 confirm 'Install this Beam bundle?' || { printf 'No changes made.\n'; exit 0; }
 
 backup_dir="$work_dir/backup-$(date -u +%Y%m%dT%H%M%SZ)"
@@ -186,39 +186,37 @@ if (( ${#app_images[@]} != 1 || ${#network_images[@]} != 1 )); then
     die "Expected one app and one network update binary. Beam remains stopped."
 fi
 printf 'App image: %s\nNetwork image: %s\n' "${app_images[0]}" "${network_images[0]}"
-if ! "$beam_bin" device enter-bootloader; then
-    "$beam_bin" down
-    die "Could not enter bootloader mode. Beam remains stopped."
-fi
 "$beam_bin" down
-for attempt in {1..20}; do
-    [[ -e "$usb_device" ]] && break
-    sleep 1
-done
-[[ -e "$usb_device" ]] || die "Bootloader USB port $usb_device did not reappear. Beam remains stopped."
-"$beam_bin" device update-firmware --device "$usb_device" --firmware "${app_images[0]}" > "$work_dir/app-dfu.log" 2>&1 || {
+"$beam_bin" device update-firmware --firmware "${app_images[0]}" > "$work_dir/app-dfu.log" 2>&1 || {
     cat "$work_dir/app-dfu.log"; die "Application DFU failed. Beam remains stopped."
 }
 cat "$work_dir/app-dfu.log"
 grep -Fq 'Success - Firmware update complete.' "$work_dir/app-dfu.log" || die "Application DFU did not report success. Beam remains stopped."
 
 confirm 'Continue with network firmware DFU?' || die "Network DFU cancelled. Beam remains stopped."
-for attempt in {1..20}; do
-    [[ -e "$usb_device" ]] && break
-    sleep 1
-done
-[[ -e "$usb_device" ]] || die "Attached USB device disappeared after app DFU. Beam remains stopped."
-"$beam_bin" device update-firmware --device "$usb_device" --network-firmware "${network_images[0]}" > "$work_dir/network-dfu.log" 2>&1 || {
+"$beam_bin" device update-firmware --network-firmware "${network_images[0]}" > "$work_dir/network-dfu.log" 2>&1 || {
     cat "$work_dir/network-dfu.log"; die "Network DFU failed. Beam remains stopped."
 }
 cat "$work_dir/network-dfu.log"
 grep -Fq 'Success - Firmware update complete.' "$work_dir/network-dfu.log" || die "Network DFU did not report success. Beam remains stopped."
 
-confirm "Apply USB lock to Node $serial?" || die "USB lock cancelled. Beam remains stopped."
-"$beam_bin" device apply-usb-lock --serial "$serial"
+printf 'Check the Node USB-lock state after DFU; reapplying the lock reboots the Node even if it was already locked.\n'
+"$beam_bin" up
+sleep 5
+"$beam_bin" device info
+already_locked=0
+if confirm "Does Node $serial currently report USB Locked: true?"; then
+    already_locked=1
+fi
+"$beam_bin" down
+if (( ! already_locked )); then
+    confirm "Apply USB lock to Node $serial?" || die "USB lock cancelled. Beam remains stopped."
+    "$beam_bin" device apply-usb-lock --serial "$serial"
+fi
 "$beam_bin" up
 printf 'Waiting for the Beam service to discover the Node.\n'
 sleep 5
+printf 'After applying USB lock, this Node may be fully off. Turn it on manually before continuing.\n'
 confirm "Is Node $serial physically powered on?" || die "Power on the Node, then run: $beam_bin device disconnect; $beam_bin device connect --usb $usb_device --register"
 "$beam_bin" device disconnect >/dev/null 2>&1 || true
 "$beam_bin" device connect --usb "$usb_device" --register

@@ -105,9 +105,8 @@ beam device info
 `beam device register --user-id ...` is for a workspace contact or resource; it
 does not register an integration identity that is absent from the contact list.
 If `Account Id` remains `0`, make sure the Node is physically powered on, then
-disconnect and reconnect with `--register`. After a successful registration,
-the displayed account value can be an on-device identifier that Beam does not
-resolve to a contact name.
+disconnect and reconnect with `--register`. A successful registration reports a
+nonzero account ID and may also resolve the active identity's name.
 
 ## Firmware update preparation
 
@@ -115,9 +114,39 @@ Check the device's reported hardware flavor and current firmware before choosing
 pc01, pc02, or pc04. Extract that hardware's ZIP to access its
 `*-app_update.bin` and `*-net_core_app_update.bin` files. Beam's
 `device update-firmware` command takes a binary path, not the release ZIP, and
-requires the Beam daemon to be stopped. Confirm the device is in the required
-bootloader state before flashing, then verify the reported versions after it
-reconnects. No hardware DFU has been validated with this preview bundle yet.
+requires the Beam daemon to be stopped. It detects a normal-mode Node, enters
+the bootloader, and performs the update.
+
+For a PC02 Node, the complete manual CLI sequence after workspace activation is:
+
+```sh
+beam device info
+beam down
+
+mkdir -p ~/beam-bundle-wizard/firmware-pc02
+unzip -oq firmware/3.30.0-rc/pc02-3.30.0-rc.zip \
+  -d ~/beam-bundle-wizard/firmware-pc02
+
+beam device update-firmware \
+  --firmware ~/beam-bundle-wizard/firmware-pc02/pc02/pc02-3.30.0-app_update.bin
+beam device update-firmware \
+  --network-firmware ~/beam-bundle-wizard/firmware-pc02/pc02/pc02-3.30.0-net_core_app_update.bin
+
+beam device apply-usb-lock --serial NODE_SERIAL
+beam up
+sleep 5
+```
+
+USB lock reboots this Node and it may be fully powered off afterward. Power it
+on manually, wait for USB to enumerate, then use the fresh-connection
+registration commands above. Finish with `beam status`.
+
+Apply USB lock only when the Node reports `USB Locked: false`. Reapplying it
+when already locked still reboots the Node and was followed by another full
+power-off on Uno Q. After a successful registration, no further USB-lock
+command is needed. `Connected to device` alone does not confirm the Node is
+awake or that registration succeeded; check `beam device info` for the serial,
+USB lock, and assigned account.
 
 ## Download wizard
 
