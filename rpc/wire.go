@@ -19,11 +19,10 @@ import (
 var beamHTTPClient = &http.Client{Timeout: 10 * time.Second}
 
 const (
-	defaultBeamURL     = "http://localhost:9091"
-	defaultWorkspaceID = 39054
+	defaultBeamURL = "http://localhost:9091"
 
 	// EnvelopeNamespace is stamped on every outbound Envelope and checked on every
-	// inbound one. Any IPv4Datagram that doesn't carry this exact value is discarded
+	// inbound one. Any datagram that doesn't carry this exact value is discarded
 	// before dispatch, preventing accidental execution of non-RPC packets.
 	EnvelopeNamespace = "swl.rpc.v1"
 )

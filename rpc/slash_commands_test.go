@@ -12,10 +12,18 @@ import (
 func TestShellSlashCommandsAreHandledLocally(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	pingCalls := 0
+	var started rpcpb.StreamStart_Kind
+	var interval time.Duration
+	var closed uint32
 	commands := shellSlashCommands{
 		stdout: &stdout,
 		stderr: &stderr,
 		ping:   func() { pingCalls++ },
+		start: func(kind rpcpb.StreamStart_Kind, every time.Duration) error {
+			started, interval = kind, every
+			return nil
+		},
+		close: func(key uint32) error { closed = key; return nil },
 	}
 
 	if commands.handle("echo /ping") {
@@ -29,6 +37,15 @@ func TestShellSlashCommandsAreHandledLocally(t *testing.T) {
 	}
 	if !commands.handle("/unknown") || !strings.Contains(stderr.String(), "unknown Grid Remote Shell command") {
 		t.Fatalf("unknown command output = %q", stderr.String())
+	}
+	if !commands.handle("/watch 3s") || started != rpcpb.StreamStart_WATCH_BEAM || interval != 3*time.Second {
+		t.Fatalf("watch = %v every %s", started, interval)
+	}
+	if !commands.handle("/seismograph") || started != rpcpb.StreamStart_SEISMOGRAPH || interval != 5*time.Second {
+		t.Fatalf("seismograph = %v every %s", started, interval)
+	}
+	if !commands.handle("/close 123") || closed != 123 {
+		t.Fatalf("closed stream = %d", closed)
 	}
 }
 

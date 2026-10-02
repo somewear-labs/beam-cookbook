@@ -10,6 +10,7 @@ Five standalone Go programs that simulate military sensors and push data through
 | `cbrn` | 2 | CBRN standoff detector node (JCAD). Chemical agent detection (GA/GB/VX/HD/CG/AC), radiation levels, bio indicators, and threat classification. |
 | `vimu` | 4 | Vehicle IMU on an M1A2 SEPv3 Abrams MBT. 9-axis IMU with motion state (STATIONARY/MOVING/MANEUVERING/FIRING), terrain-induced vibration, and main gun recoil spikes. |
 | `tws` | — | Tactical Weather Station (TWS) supporting ground and aviation ops. NTC desert climate: diurnal temp swing, dust storm events, density altitude, flight category. Sent as **raw JSON with no SWL header**. |
+| `seismograph` | 5 | Simulated three-axis seismic waveform. Can publish through Beam or emit protobuf readings for an RPC stream. |
 
 ## Wire format
 
@@ -78,6 +79,9 @@ Each binary takes the same flags:
 
 # Show full payloads for debugging
 ./bin/tws --verbose
+
+# Emit base64 protobuf readings to stdout for the RPC server
+./bin/seismograph --stdout-proto --interval 5s
 
 # Run everything at once
 for s in bin/*; do $s --url http://localhost:9091 --workspace 76854 & done

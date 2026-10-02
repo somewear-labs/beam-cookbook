@@ -26,6 +26,8 @@ message RpcRequest {
     ConnectRequest   connect   = 2;
     DiscoverRequest  discover  = 3;
     PingRequest      ping      = 4;
+    StreamStart      stream_start = 5;
+    StreamClose      stream_close = 6;
   }
 }
 
@@ -37,6 +39,7 @@ message RpcResponse {
     ConnectResponse   connect   = 3;
     DiscoverResponse  discover  = 4;
     PingResponse      ping      = 5;
+    StreamData        stream_data = 6;
   }
 }
 
@@ -50,6 +53,31 @@ message ExecResponse {
   string output    = 1;
   int32  exit_code = 2;
   bool   truncated = 3;
+}
+
+message StreamStart {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    WATCH_BEAM = 1;
+    SEISMOGRAPH = 2;
+  }
+
+  Kind kind = 1;
+  uint32 stream_key = 2;
+  uint32 interval_ms = 3;
+}
+
+message StreamClose {
+  uint32 stream_key = 1;
+  uint32 start_request_id = 2;
+}
+
+message StreamData {
+  uint32 stream_key = 1;
+  uint64 sequence = 2;
+  bytes data = 3;
+  bool closed = 4;
+  string error = 5;
 }
 
 // --- Connect ---
