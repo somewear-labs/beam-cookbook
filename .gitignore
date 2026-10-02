@@ -1,3 +1,4 @@
 rpc/rpc
 rpc/rpc_linux
 rpc/proto/rpc.pb.go
+*.idea
