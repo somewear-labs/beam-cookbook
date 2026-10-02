@@ -16,6 +16,9 @@ Commands:
   shell    Start an interactive remote shell (on the local machine)
   send     Send a single command
 
+Options:
+  --version, -version, version   Print the build's Git commit hash
+
 Run 'rpc <command> -help' for command-specific options.
 `
 
