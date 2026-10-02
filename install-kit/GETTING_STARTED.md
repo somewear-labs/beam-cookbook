@@ -19,7 +19,7 @@ it over USB. Run each command separately and check its result before continuing.
   permission to access its serial port.
 
 Replace `BUNDLE.zip`, `BUNDLE_DIRECTORY`, `WORKSPACE_ID`, `NODE_SERIAL`, and
-`USB_PORT`, and `RADIO_CHANNEL` with the values for your installation. The firmware examples are
+`USB_PORT`, and the radio-profile placeholders below with the values for your installation. The firmware examples are
 for PC02 hardware and Bond 3.30.0-rc; use the files matching your Node.
 
 ## Verify and install the bundle
@@ -197,36 +197,56 @@ for PC02 hardware and Bond 3.30.0-rc; use the files matching your Node.
 
 ## Apply the workspace radio settings
 
-Registration and workspace activation do not confirm that the Node's existing
-radio settings match the workspace. Obtain the intended default radio channel
-from your workspace administrator before sending radio traffic.
+Obtain the full workspace radio profile from your workspace administrator.
+Registration does not confirm that the Node's existing radio profile matches
+it. Keep Beam running and the intended Node powered on and connected over USB.
+The API below writes through the daemon's existing device connection.
 
-1. View the supported channel names and radio-mode values:
+1. Create `radio-settings.json` with the following template. Replace both
+   frequency placeholders with integer values in Hz, and replace the quoted
+   enum placeholders with the administrator-supplied values before sending it:
 
-   ```sh
-   beam device update-settings --help
+   ```json
+   {
+     "settings": {
+       "lowSpeedFrequencyHz": LOW_FREQUENCY_HZ,
+       "highSpeedFrequencyHz": HIGH_FREQUENCY_HZ,
+       "lowSpeedSpreadFactor": "LOW_SPREAD_FACTOR",
+       "highSpeedSpreadFactor": "HIGH_SPREAD_FACTOR",
+       "lowSpeedBandwidth": "LOW_BANDWIDTH",
+       "highSpeedBandwidth": "HIGH_BANDWIDTH",
+       "radioRegion": "RADIO_REGION",
+       "radioPowerMode": "RADIO_POWER_MODE",
+       "radioMode": "RadioModeEnabled"
+     }
+   }
    ```
 
-2. Apply the workspace's intended channel to the connected, powered-on Node:
+   This template becomes valid JSON after substitution. Enum spelling matters:
+   SF5 is `RadioSpreadFactor05`, 500 kHz is `RadioBandwidth500KHz`, and high
+   power is `PowerModeHigh`. These explain the format; use the actual workspace
+   profile rather than treating them as defaults. Keep only the intended Node
+   attached: this endpoint operates on the daemon-connected device.
+2. Apply the profile through the local Beam API:
 
    ```sh
-   beam device update-settings --radio-channel RADIO_CHANNEL --radio-mode Enabled
+   curl --fail-with-body --silent --show-error --max-time 60 --header 'Content-Type: application/json' --data-binary @radio-settings.json http://localhost:9091/api/device/daemon-settings
    ```
 
-   Replace `RADIO_CHANNEL` with the supported command value matching the
-   workspace default. Channel command values omit spaces from their display
-   names. Review the proposed settings and accept the confirmation prompt.
-   Keep only the intended Node connected while applying settings.
-3. Read the settings back from the device:
+   Check the returned `results` entry for `success: true`, the intended
+   `deviceSerial`, and settings matching the requested profile. An HTTP success
+   alone is insufficient; `success: false` means the write was not confirmed.
+   This endpoint also saves settings through Beam's workspace-settings source.
+3. Read the device settings back:
 
    ```sh
-   beam device info
+   curl --fail-with-body --silent --show-error http://localhost:9091/api/device/daemon-settings
    ```
 
-   Confirm `Radio Channel` matches the workspace default and `Radio Mode` is
-   `Enabled`. Do not infer the workspace default from the Node's previous
-   channel. Apply any additional administrator-supplied radio settings using
-   the supported options shown by `update-settings --help`.
+   Confirm both frequencies, both spreading factors, both bandwidths, region,
+   power, and enabled mode match the supplied profile. Require `success: true`
+   and the intended serial. Do not infer the workspace profile from the Node's
+   previous channel or from a named-channel display alone.
 
 ## Troubleshooting
 
