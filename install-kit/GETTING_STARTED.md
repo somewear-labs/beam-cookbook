@@ -1,194 +1,250 @@
-# Beam getting started
+---
+title: "Install Beam and connect a Node"
+description: "Install the Beam bundle, authenticate, update Node firmware, and register a USB connection."
+audience: "For developers and integrators setting up Beam on Linux."
+lastUpdated: 2026-10-02
+---
 
-This bundle contains a local preview build of Beam, its installer, launcher, and
-Bond 3.30.0-rc firmware for pc01, pc02, and pc04 hardware.
-Source revisions and build details are in `MANIFEST.txt`. The bundle includes
-Java 21 and `newtmgr` for Linux ARM64, plus Windows x64 `newtmgr.exe` for manual
-firmware work. The Beam installer does not support Windows.
-The matching `*-wizard.sh` is also distributed beside the ZIP. It downloads
-the ZIP from a supplied URL, checks its SHA-256 and internal checksums, then
-guides installation and optional device firmware updates.
+Install Beam, authorize access to your workspace, update the Node, then connect
+it over USB. Run each command separately and check its result before continuing.
 
-## Requirements
+## What you'll need
 
-- Linux ARM64 with bundled Java 21, or macOS/Linux x64 with Java 21 installed.
-- On Linux, a working user systemd session for `beam up`.
-- Internet access and a Somewear account or API key for your workspace.
-- For radio connectivity, a Somewear Node and a USB data cable. Your user must
-  have permission to access the serial device on Linux.
-- Power the Node on before registration. A Node in deep sleep accepts device
-  discovery but ignores registration commands.
+- A Beam bundle ZIP and its SHA-256 checksum supplied by your administrator.
+- Linux ARM64 with a user systemd session. This bundle includes Java 21 and
+  `newtmgr` for firmware updates. Other macOS/Linux architectures require Java
+  21 and a compatible `newtmgr` installation. These steps use Linux commands.
+- Internet access and an organization administrator to approve sign-in.
+- One Node, its hardware flavor, and a USB data cable. Your Linux user needs
+  permission to access its serial port.
 
-## Install
+Replace `BUNDLE.zip`, `BUNDLE_DIRECTORY`, `WORKSPACE_ID`, `NODE_SERIAL`, and
+`USB_PORT`, and `RADIO_CHANNEL` with the values for your installation. The firmware examples are
+for PC02 hardware and Bond 3.30.0-rc; use the files matching your Node.
 
-Extract the ZIP, open a terminal, and enter the extracted directory. Linux ARM64
-uses the bundled runtime. On other supported hosts, check Java:
+## Verify and install the bundle
 
-```sh
-java -version
-```
+1. Download the supplied ZIP. If installing on a remote computer, transfer the
+   ZIP with your normal secure file-transfer tool.
+2. Verify its checksum against the value supplied with the bundle:
 
-If the default Java is older than 21, set `JAVA_HOME` to your Java 21 installation
-directory. The installer saves the selected Java executable for the launcher.
+   ```sh
+   sha256sum BUNDLE.zip
+   ```
 
-```sh
-sh install.sh
-export PATH="$HOME/bin:$PATH"
-beam --help
-```
+   Stop if the checksum differs. Download a fresh copy before proceeding.
+3. Extract the bundle:
 
-Installation verifies the included checksums and copies `beam`, `beam.jar`, and
-`beam-java-path` into `~/bin`. On Linux ARM64 it also installs `newtmgr` and
-`beam-runtime`. It does not need sudo. Add the PATH line to your
-shell startup file to keep it for future terminals. Use `command -v beam` to
-confirm you are running this installation.
+   ```sh
+   unzip BUNDLE.zip
+   ```
 
-The firmware remains in this extracted bundle under `firmware/3.30.0-rc/`.
-Keep the bundle until the device update is complete. Each pcXX ZIP contains
-application and network update binaries, factory images, and debug files.
-Choose the ZIP matching the device's hardware flavor; do not infer the flavor
-from the ZIP's version number. The included `build-manifest.json` describes
-pc04 only. The installer does not flash a device.
+4. Enter its extracted directory:
 
-To choose another directory, use `sh install.sh --bin-dir /absolute/path/bin`
-and put that directory on PATH. Use a path without spaces for service startup.
+   ```sh
+   cd BUNDLE_DIRECTORY
+   ```
 
-## Start and sign in
+5. Install Beam and the bundled dependencies:
 
-Connect your Node if using radio connectivity, then run:
+   ```sh
+   sh install.sh
+   ```
 
-```sh
-beam up
-beam status
-```
+   Each checksum should report `OK`. The installer writes Beam to `~/bin` and
+   does not require sudo. It does not flash the Node.
+6. Add the installation directory to this terminal's command path:
 
-`beam up` creates/starts the platform's background service and prompts for sign-in
-when needed. If authentication is still required, run:
+   ```sh
+   export PATH="$HOME/bin:$PATH"
+   ```
 
-```sh
-beam auth sign-in
-```
+7. Check that Beam starts:
 
-Follow the browser or approval-link flow. On a headless host, open the printed
-link from an administrator workstation to authorize the sign-in.
-Explore workspace and device commands with:
+   ```sh
+   beam --help
+   ```
 
-```sh
-beam workspace --help
-beam device --help
-```
+## Sign in and choose a workspace
 
-Stop the service with `beam down`. Inspect diagnostic commands with `beam log --help`.
-This bundle's installer has been checked in isolation; starting the service and
-connecting real hardware still need validation on the recipient's host.
+1. Start Beam:
 
-## Register the Node
+   ```sh
+   beam up
+   ```
 
-List workspaces before activation so that you select the intended workspace ID:
+2. Start sign-in:
 
-```sh
-beam workspace list
-beam workspace activate --id WORKSPACE_ID
-```
+   ```sh
+   beam auth sign-in
+   ```
 
-Use the browser or approval-link sign-in flow before this step. For an
-integration identity, register its active Beam identity during a fresh USB
-connection:
+   Enter your organization's API domain when prompted. Open the printed link
+   in a browser and sign in as an organization administrator. Wait for
+   `Signed in.` before continuing. Keep the approval link private.
+3. List available workspaces:
 
-```sh
-beam device disconnect
-beam device connect --usb /dev/ttyACM0 --register
-sleep 5
-beam device info
-```
+   ```sh
+   beam workspace list
+   ```
 
-`beam device register --user-id ...` is for a workspace contact or resource; it
-does not register an integration identity that is absent from the contact list.
-If `Account Id` remains `0`, make sure the Node is physically powered on, then
-disconnect and reconnect with `--register`. A successful registration reports a
-nonzero account ID and may also resolve the active identity's name.
+4. Activate the intended workspace using its ID from that list:
 
-## Firmware update preparation
+   ```sh
+   beam workspace activate --id WORKSPACE_ID
+   ```
 
-Check the device's reported hardware flavor and current firmware before choosing
-pc01, pc02, or pc04. Extract that hardware's ZIP to access its
-`*-app_update.bin` and `*-net_core_app_update.bin` files. Beam's
-`device update-firmware` command takes a binary path, not the release ZIP, and
-requires the Beam daemon to be stopped. It detects a normal-mode Node, enters
-the bootloader, and performs the update.
+## Check and update the Node
 
-For a PC02 Node, the complete manual CLI sequence after workspace activation is:
+1. Connect one Node over USB and power it on manually. Wait for USB discovery.
+2. Check its serial and current firmware:
 
-```sh
-beam device info
-beam down
+   ```sh
+   beam device info
+   ```
 
-mkdir -p ~/beam-bundle-wizard/firmware-pc02
-unzip -oq firmware/3.30.0-rc/pc02-3.30.0-rc.zip \
-  -d ~/beam-bundle-wizard/firmware-pc02
+   Confirm the serial matches your intended Node. Choose firmware using its
+   hardware flavor; do not use a PC02 image for another hardware flavor.
+3. Stop Beam before firmware updates:
 
-beam device update-firmware \
-  --firmware ~/beam-bundle-wizard/firmware-pc02/pc02/pc02-3.30.0-app_update.bin
-beam device update-firmware \
-  --network-firmware ~/beam-bundle-wizard/firmware-pc02/pc02/pc02-3.30.0-net_core_app_update.bin
+   ```sh
+   beam down
+   ```
 
-beam device apply-usb-lock --serial NODE_SERIAL
-beam up
-sleep 5
-```
+4. Extract the matching firmware ZIP. For PC02:
 
-USB lock reboots this Node and it may be fully powered off afterward. Power it
-on manually, wait for USB to enumerate, then use the fresh-connection
-registration commands above. Finish with `beam status`.
+   ```sh
+   unzip firmware/3.30.0-rc/pc02-3.30.0-rc.zip -d firmware-selected
+   ```
 
-Apply USB lock only when the Node reports `USB Locked: false`. Reapplying it
-when already locked still reboots the Node and was followed by another full
-power-off on Uno Q. After a successful registration, no further USB-lock
-command is needed. `Connected to device` alone does not confirm the Node is
-awake or that registration succeeded; check `beam device info` for the serial,
-USB lock, and assigned account.
+5. Update the application firmware:
 
-## Download wizard
+   ```sh
+   beam device update-firmware --firmware firmware-selected/pc02/pc02-3.30.0-app_update.bin
+   ```
 
-Get the wizard from the same delivery location as the ZIP, then run it with the
-bundle URL, the SHA-256 supplied by the bundle creator, and the intended Node
-serial. For example:
+   Keep the USB cable connected. Continue only after the update reports success.
+   Beam handles bootloader entry and uses the installed `newtmgr` executable.
+6. Update the network firmware:
 
-```sh
-bash beam-bundle-wizard.sh --url 'http://TVPN_HOST:PORT/beam-BUILD.zip' \
-  --sha256 'EXPECTED_64_CHARACTER_SHA256' --serial 'NODE_SERIAL' \
-  --hardware pc02
-```
+   ```sh
+   beam device update-firmware --network-firmware firmware-selected/pc02/pc02-3.30.0-net_core_app_update.bin
+   ```
 
-Use `--download-only` to verify the transfer without stopping Beam or changing
-the Node. Select hardware from a prior device record. The interactive path
-installs Beam, starts it temporarily for browser or approval-link sign-in, lists
-available workspaces, prompts for the workspace ID, then stops it for
-application and network DFU, applies USB lock, starts Beam, and registers a
-powered-on Node. It asks before each device-changing step.
-If a DFU step fails or is cancelled after Beam stops, Beam remains stopped for
-inspection. Keep the extracted directory for the firmware and DFU logs.
+   Continue only after the update reports success. The network core has its
+   own version; it need not match the application version.
 
-For large TVPN transfers, copy the ZIP with `scp`, verify it with the supplied
-SHA-256, and run the wizard with `--bundle-file /path/to/beam-bundle.zip`
-instead of `--url`. URL downloads resume into a `.part` file when the server
-supports HTTP ranges.
+## Switch the Node to USB
 
-## Replace an existing build
+1. If the Node already reports `USB Locked: true` and `Connection Mode: USB`,
+   proceed to registration. Otherwise, keep Beam stopped and apply USB lock:
 
-Stop the existing Beam using its current launcher, then install this bundle:
+   ```sh
+   beam device apply-usb-lock --serial NODE_SERIAL
+   ```
 
-```sh
-beam down
-sh install.sh --force
-beam --help
-beam up
-```
+   The lock prevents changes back to Bluetooth. Changing connection mode
+   triggers a reboot. The Node may remain off afterward; power it on manually.
+2. Start Beam:
 
-The installer replaces files but does not migrate configuration or automatically
-stop/restart services. Keep your previous bundle if you need to roll back; stop
-Beam and reinstall that bundle. Avoid `beam upgrade` to retain this preview build.
+   ```sh
+   beam up
+   ```
 
-To remove this installation, run `beam down`, then remove the installed Beam
-files and, on Linux ARM64, `newtmgr` and `beam-runtime` from your chosen
-directory. Your Beam configuration remains on disk.
+3. Wait for USB discovery, then inspect the Node:
+
+   ```sh
+   beam device info
+   ```
+
+   Confirm the intended serial, `USB Locked: true`, and `Connection Mode: USB`.
+   Device info can be available while the Node is off, so confirm it is powered
+   on before registration.
+
+## Register and verify the connection
+
+1. Close any existing Beam device connection:
+
+   ```sh
+   beam device disconnect
+   ```
+
+   `No device is connected` is acceptable at this step.
+2. Connect and register Beam's active identity:
+
+   ```sh
+   beam device connect --usb USB_PORT --register
+   ```
+
+   Use the serial-port path assigned by your host. This command works with the
+   authenticated integration identity and does not require a contact lookup.
+3. Wait a few seconds, then inspect the registration:
+
+   ```sh
+   beam device info
+   ```
+
+   Confirm the intended serial, USB mode, USB lock, expected app firmware, and
+   a nonzero `Account Id`. Check the `Assigned To` name when available.
+4. Check the service:
+
+   ```sh
+   beam status
+   ```
+
+   Expect `Beam service (user): Up`. On Linux, `User lingering: Enabled` means
+   the service continues after logout.
+
+## Apply the workspace radio settings
+
+Registration and workspace activation do not confirm that the Node's existing
+radio settings match the workspace. Obtain the intended default radio channel
+from your workspace administrator before sending radio traffic.
+
+1. View the supported channel names and radio-mode values:
+
+   ```sh
+   beam device update-settings --help
+   ```
+
+2. Apply the workspace's intended channel to the connected, powered-on Node:
+
+   ```sh
+   beam device update-settings --radio-channel RADIO_CHANNEL --radio-mode Enabled
+   ```
+
+   Replace `RADIO_CHANNEL` with the supported command value matching the
+   workspace default. Channel command values omit spaces from their display
+   names. Review the proposed settings and accept the confirmation prompt.
+   Keep only the intended Node connected while applying settings.
+3. Read the settings back from the device:
+
+   ```sh
+   beam device info
+   ```
+
+   Confirm `Radio Channel` matches the workspace default and `Radio Mode` is
+   `Enabled`. Do not infer the workspace default from the Node's previous
+   channel. Apply any additional administrator-supplied radio settings using
+   the supported options shown by `update-settings --help`.
+
+## Troubleshooting
+
+- **No devices found:** check the cable, serial permissions, and physical power.
+  Wait for USB enumeration, then repeat `beam device info`.
+- **Device is already connected:** disconnect before repeating
+  `connect --register`; that message means registration did not run.
+- **Account Id remains 0:** power the Node on manually, then disconnect and
+  reconnect with `--register`. Off-state firmware ignores registration.
+- **Beam daemon is running:** run `beam down` before DFU or USB-lock commands.
+- **Peer client is down immediately after startup:** allow startup to finish,
+  then check `beam status` again. If it persists, inspect `beam log --help`.
+- **Registration prints both failure and success:** rely on device readback.
+  This preview's contact-registration command can print a misleading success
+  line. Use `connect --register` for the active integration identity.
+
+## Related
+
+- [Installer](install.sh) — the installer included in this bundle.
+- `beam device --help` — device and firmware commands.
+- `beam log --help` — inspect diagnostic logs.

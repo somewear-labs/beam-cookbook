@@ -5,6 +5,6 @@ Use `GETTING_STARTED.md` for the command-line bring-up flow. The installer and
 launcher require the remaining files from the release bundle, including the
 Beam JAR, checksum manifest, firmware, and dependencies.
 
-`wizard.sh` is optional. It automates download, installation, DFU, and
-registration. Use the documented CLI commands when validating the same flow a
-customer follows manually.
+Follow `GETTING_STARTED.md` one command at a time, checking each result before
+continuing. The guide covers installation, browser authorization, workspace
+selection, firmware updates, USB lock, and registration.
