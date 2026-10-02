@@ -2,11 +2,17 @@ APP          := beam-ops
 GCS_BUCKET   := gs://get-somewear-app/atakplugin
 GSUTIL_FLAGS := -h "Cache-Control:no-cache, no-store, must-revalidate"
 
-DEVICES_ARM64     := tank@100.68.160.75 jahmelon@100.68.160.77
-DEVICES_MAC_ARM64 := matthewroberts@mac.lan
+HOSTS_CONF ?= $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../../../beam/script/dev-hosts.conf)
+ifeq ($(wildcard $(HOSTS_CONF)),)
+$(error Dev hosts file not found: $(HOSTS_CONF))
+endif
+
+DEVICES_ARM64     := $(shell awk 'NF >= 2 && substr($$1,1,1) != sprintf("%c",35) && $$2 == "linux" { print $$1 }' $(HOSTS_CONF))
+DEVICES_MAC_ARM64 := $(shell awk 'NF >= 2 && substr($$1,1,1) != sprintf("%c",35) && $$2 == "mac" { print $$1 }' $(HOSTS_CONF))
+DEVICES_LOCAL     := $(shell awk 'NF >= 2 && substr($$1,1,1) != sprintf("%c",35) && $$2 == "local" { print $$1 }' $(HOSTS_CONF))
 BEAM_JAR          := ../../../beam/app/build/libs/somewear-beam.jar
 
-.PHONY: package-mac package-linux ship ship-dev ship-rpc ship-local ship-beam-jar clean
+.PHONY: package-mac package-linux ship ship-dev ship-rpc ship-local ship-beam-jar versions clean
 
 # Full dev deploy from macOS:
 #   1. Builds macOS arm64 + x64 .zip artifacts (package-mac)
@@ -97,6 +103,27 @@ ship-beam-jar:
 		ssh $$host "cp /tmp/beam.jar ~/bin/beam.jar && rm /tmp/beam.jar && ~/bin/beam daemon stop; sleep 2; ~/bin/beam daemon start &"; \
 		echo "  done $$host"; \
 	done
+
+# Print Beam and RPC versions from every active entry in beam/script/dev-hosts.conf.
+versions:
+	@failed=0; \
+	printf '%-32s %-38s %s\n' HOST BEAM RPC; \
+	printf '%-32s %-38s %s\n' '--------------------------------' '--------------------------------------' '--------------------------------------'; \
+	query_versions() { \
+		host="$$1"; os="$$2"; \
+		case "$$os" in \
+			linux) result=$$(ssh -o BatchMode=yes -o ConnectTimeout=8 "$$host" 'beam=$$(/usr/bin/beam -b version 2>&1) || beam="UNAVAILABLE"; rpc=$$(~/bin/rpc --version 2>&1) || rpc="UNAVAILABLE"; printf "%s|%s" "$$beam" "$$rpc"') || result='UNREACHABLE|UNREACHABLE' ;; \
+			mac) result=$$(ssh -o BatchMode=yes -o ConnectTimeout=8 "$$host" 'beam=$$(~/bin/beam -b version 2>&1) || beam="UNAVAILABLE"; rpc=$$(~/bin/rpc --version 2>&1) || rpc="UNAVAILABLE"; printf "%s|%s" "$$beam" "$$rpc"') || result='UNREACHABLE|UNREACHABLE' ;; \
+			local) beam=$$("$$HOME/bin/beam" -b version 2>&1) || beam=UNAVAILABLE; rpc=$$("$$HOME/bin/rpc" --version 2>&1) || rpc=UNAVAILABLE; result="$$beam|$$rpc" ;; \
+		esac; \
+		beam=$${result%%|*}; rpc=$${result#*|}; \
+		printf '%-32s %-38s %s\n' "$$host ($$os)" "$$beam" "$$rpc"; \
+		case "$$result" in *UNAVAILABLE*|*UNREACHABLE*) failed=1 ;; esac; \
+	}; \
+	for host in $(DEVICES_ARM64); do query_versions "$$host" linux; done; \
+	for host in $(DEVICES_MAC_ARM64); do query_versions "$$host" mac; done; \
+	for host in $(DEVICES_LOCAL); do query_versions "$$host" local; done; \
+	exit $$failed
 
 clean:
 	rm -rf dist-electron

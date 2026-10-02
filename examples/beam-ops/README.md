@@ -46,6 +46,12 @@ npm run build
 npm run preview
 ```
 
+### Check deployed Beam and RPC versions
+
+From this directory, run `make versions` to print both versions from every
+active host in `../../../beam/script/dev-hosts.conf` (Linux, macOS, and local).
+The same config supplies the host lists used by the deployment targets.
+
 ---
 
 ## Architecture
