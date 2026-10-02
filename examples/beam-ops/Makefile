@@ -8,9 +8,14 @@ BEAM_JAR          := ../../../beam/app/build/libs/somewear-beam.jar
 
 .PHONY: package-mac package-linux ship ship-dev ship-rpc ship-local ship-beam-jar clean
 
-# Build mac artifacts and deploy to all devices. A fast dev iteration loop.
-# Linux devices use the most recent AppImage in dist-electron/; self-build on
-# the device if you need a fresh linux build.
+# Full dev deploy from macOS:
+#   1. Builds macOS arm64 + x64 .zip artifacts (package-mac)
+#   2. Pushes local beam dev jar to all devices in DEVICES_ARM64 and DEVICES_MAC_ARM64;
+#      restarts beam daemon on each
+#   3. Deploys linux arm64 AppImage + rpc binary to DEVICES_ARM64 via rsync (uses
+#      whatever AppImage is already in dist-electron/ — run package-linux on a Linux box first)
+#   4. Deploys mac arm64 .zip + rpc binary to DEVICES_MAC_ARM64 via rsync; relaunches Beam Ops
+#   5. Installs mac arm64 .zip to /Applications and rpc to ~/bin locally; relaunches Beam Ops
 ship-dev: package-mac ship-local
 
 # Build macOS artifacts (.zip for arm64 and x64). Run on macOS.
@@ -38,6 +43,7 @@ ship: ship-rpc
 
 # Upload rpc binaries and installer to GCS so install-rpc.sh works.
 ship-rpc:
+	$(MAKE) -C ../../rpc build-all
 	gsutil -m $(GSUTIL_FLAGS) cp -a public-read \
 		../../rpc/bin/rpc_darwin_arm64 \
 		../../rpc/bin/rpc_darwin_amd64 \
@@ -51,7 +57,7 @@ ship-rpc:
 # Also deploys the rpc binary straight into each device's app userData directory.
 # This sidesteps the extraResources cross-compilation bug (Linux AppImages built
 # on macOS don't reliably include extraResources in the final squashfs).
-ship-local:
+ship-local: ship-beam-jar
 	@for host in $(DEVICES_ARM64); do \
 		echo "→ deploying to $$host"; \
 		rsync -az --progress \
