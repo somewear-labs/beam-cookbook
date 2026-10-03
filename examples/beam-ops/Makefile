@@ -22,7 +22,7 @@ BEAM_JAR          := ../../../beam/app/build/libs/somewear-beam.jar
 #      whatever AppImage is already in dist-electron/ — run package-linux on a Linux box first)
 #   4. Deploys mac arm64 .zip + rpc binary to DEVICES_MAC_ARM64 via rsync; relaunches Beam Ops
 #   5. Installs mac arm64 .zip to /Applications and rpc to ~/bin locally; relaunches Beam Ops
-ship-dev: package-mac ship-local
+ship-dev: package-mac package-linux ship-local
 
 # Build macOS artifacts (.zip for arm64 and x64). Run on macOS.
 package-mac:
