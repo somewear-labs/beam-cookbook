@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -34,67 +33,44 @@ func TestShellSlashCommandsAreHandledLocally(t *testing.T) {
 }
 
 func TestDoPingReportsRoundTrip(t *testing.T) {
-	requestSent := make(chan int64, 1)
-	send := func(_ string, workspace int, targetUserID int64, payload string) error {
-		if workspace != 7 || targetUserID != 99 {
-			t.Errorf("send target = workspace %d, account %d", workspace, targetUserID)
+	request := func(_ string, targetUserID int64, data string, timeout time.Duration) (beamDatagram, error) {
+		if targetUserID != 99 {
+			t.Errorf("request account = %d", targetUserID)
 		}
-		envelope, err := unmarshalEnvelope(payload)
+		if timeout != time.Second {
+			t.Errorf("timeout = %s", timeout)
+		}
+		envelope, err := unmarshalEnvelope(data)
 		if err != nil {
-			t.Errorf("decode PingRequest: %v", err)
-			return nil
+			t.Errorf("decode ping: %v", err)
+			return beamDatagram{}, nil
 		}
 		ping := envelope.GetRequest().GetPing()
 		if ping == nil {
-			t.Error("send payload is not PingRequest")
-			return nil
+			t.Errorf("ping envelope = %+v", envelope)
+			return beamDatagram{}, nil
 		}
-		requestSent <- ping.GetClientSendUnixMillis()
-		return nil
-	}
-
-	var nextID, pendingID atomic.Uint32
-	nextID.Store(41)
-	responses := make(chan inboundEnvelope, 1)
-	go func() {
-		clientSentAt := time.UnixMilli(<-requestSent)
-		requestPackageSentAt := clientSentAt.Truncate(time.Second)
-		responsePackageSentAt := clientSentAt.Add(12 * time.Millisecond).Truncate(time.Second)
-		responses <- inboundEnvelope{envelope: &rpcpb.Envelope{
-			RequestId: 42,
+		clientSentAt := time.UnixMilli(ping.ClientSendUnixMillis)
+		time.Sleep(30 * time.Millisecond)
+		response, err := marshalEnvelope(&rpcpb.Envelope{
+			RequestId: envelope.RequestId,
 			Payload: &rpcpb.Envelope_Response{Response: &rpcpb.RpcResponse{
 				Result: &rpcpb.RpcResponse_Ping{Ping: &rpcpb.PingResponse{
-					TargetReceiveUnixMillis:      clientSentAt.Add(10 * time.Millisecond).UnixMilli(),
-					TargetSendUnixMillis:         clientSentAt.Add(12 * time.Millisecond).UnixMilli(),
-					ClientPackageSendUnixSeconds: requestPackageSentAt.Unix(),
-					ClientAccountId:              88,
+					TargetReceiveUnixMillis: clientSentAt.Add(10 * time.Millisecond).UnixMilli(),
+					TargetSendUnixMillis:    clientSentAt.Add(12 * time.Millisecond).UnixMilli(),
 				}},
 			}},
-		}, packageSentAt: responsePackageSentAt, receivedAt: clientSentAt.Add(30 * time.Millisecond)}
-	}()
+		})
+		return beamDatagram{Data: response}, err
+	}
 
 	var stdout, stderr bytes.Buffer
-	if !doPing("beam", 7, 99, time.Second, &nextID, &pendingID, responses, &stdout, &stderr, send) {
+	if !doPing("beam", 99, time.Second, &stdout, &stderr, request) {
 		t.Fatalf("doPing failed: %s", stderr.String())
 	}
-	if got := stdout.String(); !strings.Contains(got, "client → target  wall 10ms · computed 14ms") ||
-		!strings.Contains(got, "target → client  wall 18ms · computed 14ms") ||
-		!strings.Contains(got, "round trip       wall 30ms · computed 28ms") ||
-		!strings.Contains(got, "clock offset     -4ms (target behind)") ||
-		!strings.Contains(got, "datagrams        request ") ||
-		!strings.Contains(got, " · response ") {
+	if got := stdout.String(); !strings.Contains(got, "Grid ping account 99") ||
+		!strings.Contains(got, "round trip") || !strings.Contains(got, "clock offset") {
 		t.Fatalf("doPing output = %q", got)
-	}
-	if got := pendingID.Load(); got != 0 {
-		t.Fatalf("pending ID = %d", got)
-	}
-}
-
-func TestIPv4DatagramIDMatchesGridEncoding(t *testing.T) {
-	got := ipv4DatagramID(time.Unix(1_700_000_000, 0), 300)
-	want := "6553f10037ac0200"
-	if got != want {
-		t.Fatalf("ipv4DatagramID() = %q, want %q", got, want)
 	}
 }
 

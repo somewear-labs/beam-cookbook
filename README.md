@@ -4,9 +4,9 @@ Practical tools and examples for building on top of the [Somewear](https://somew
 
 ## Recipes
 
-### [`rpc/`](./rpc) — Remote Shell over IPv4Datagram
+### [`rpc/`](./rpc) — Remote Shell over GridDatagram
 
-A lightweight remote shell that lets you execute commands on a remote machine over the Somewear network (satellite or WiFi). Commands and responses travel as protobuf-serialized `Envelope` messages carried inside Beam's IPv4Datagram packet type.
+A lightweight remote shell that lets you execute commands on a remote machine over the Somewear network. Commands and responses are protobuf `Envelope` messages carried as opaque GridDatagram payloads.
 
 **Supported platforms**
 
