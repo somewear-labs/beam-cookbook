@@ -1,10 +1,26 @@
-# Beam install kit
+---
+title: "Beam install kit"
+description: "Install Beam and provision a Node using the release bundle."
+audience: "For developers and integrators setting up Beam on Linux."
+lastUpdated: 2026-10-03
+---
 
-These are the customer-facing assets packaged with a Beam release bundle.
-Use `GETTING_STARTED.md` for the command-line bring-up flow. The installer and
-launcher require the remaining files from the release bundle, including the
-Beam JAR, checksum manifest, firmware, and dependencies.
+Follow [Getting started](GETTING_STARTED.md) to install Beam, apply Grid host
+defaults, and provision a powered-on Node in your workspace.
 
-Follow `GETTING_STARTED.md` one command at a time, checking each result before
-continuing. The guide covers installation, browser authorization, workspace
-selection, firmware updates, USB lock, and registration.
+## Use the release bundle
+
+Download the complete release bundle supplied by your administrator. The
+installer and launcher need its Beam JAR, checksum manifest, and dependencies;
+this cookbook directory alone is not an installation package.
+
+Run the guide's commands one at a time and check each result. Firmware updates
+are optional when the Node already has the supplied release. Provisioning
+registers the Node, confirms the workspace traffic key, and applies effective
+workspace settings.
+
+## Related
+
+- [Getting started](GETTING_STARTED.md) — installation through a radio test.
+- [Installer](install.sh) — install the files from the complete bundle.
+- [Cookbook recipes](../README.md) — build on the running Beam service.
