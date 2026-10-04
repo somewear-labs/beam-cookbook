@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+BIN_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+JAVA_BIN=$(cat "$BIN_DIR/beam-java-path")
+[ -x "$JAVA_BIN" ] || { echo "Beam's Java runtime moved; rerun install.sh with JAVA_HOME set." >&2; exit 1; }
+export BEAM_IS_JAR=true
+exec "$JAVA_BIN" -XX:TieredStopAtLevel=1 -jar "$BIN_DIR/beam.jar" --daemon-path "$BIN_DIR/beam" "$@"
