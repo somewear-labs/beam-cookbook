@@ -9,6 +9,10 @@ import (
 	"syscall"
 )
 
+func lockSITL(state string) (func(), error) {
+	return lockFile(filepath.Join(state, ".sitl.lock"), "SITL state")
+}
+
 func lockUxS(root string) (func(), error) {
 	if err := checkInstallParents(root); err != nil {
 		return nil, err

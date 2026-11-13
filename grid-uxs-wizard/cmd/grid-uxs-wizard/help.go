@@ -21,6 +21,7 @@ Installation files and UxS state are selected automatically.
 Other commands:
   resume-claim       Show or finish the pending GCS claim
   setup --role gcs    Install Beam and TVPN on the GCS
+  sitl               Run the optional test simulator (advanced)
 
 Advanced presentation options:
   --non-interactive  Require flags instead of asking questions
