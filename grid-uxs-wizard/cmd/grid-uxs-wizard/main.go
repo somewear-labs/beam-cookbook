@@ -101,7 +101,9 @@ func execute(args []string) error {
 	if len(args) > 0 && args[0] == "gcs" {
 		return executeGCS(args[1:])
 	}
-
+	if len(args) > 0 && args[0] == "sitl" {
+		return executeSITL(args[1:])
+	}
 	if len(args) == 0 || args[0] != "uxs" {
 		return errors.New("unknown command; run grid-uxs-wizard --help")
 	}

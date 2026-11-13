@@ -4,6 +4,8 @@ package main
 
 import "errors"
 
+func lockSITL(string) (func(), error) { return nil, errors.New("SITL requires Linux") }
+
 func lockUxS(string) (func(), error) { return nil, errors.New("UxS setup requires Linux") }
 
 func lockRuntime(string) (func(), error) { return nil, errors.New("UxS runtime requires Linux") }

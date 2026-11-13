@@ -21,6 +21,7 @@ go build -o bin/grid-uxs-wizard ./cmd/grid-uxs-wizard
 Use an `.exe` output name on Windows. Place `grid-uxs-wizard.json` beside the
 executable to configure `fileServer`; keep the mission-computer download's
 `bundle/` directory beside its executable. Run `--help` for flags and overrides.
+For optional ArduPilot testing, see `grid-uxs-wizard sitl --help`.
 
 ### [`rpc/`](./rpc) — Remote Shell over IPv4Datagram
 
