@@ -23,9 +23,9 @@ import (
 )
 
 type options struct {
-	Beam, BeamHome, Bundle, State, GCS, CodeFile, RunUser, TVPNCommand string
-	DryRun                                                             bool
-	Wait                                                               time.Duration
+	Beam, BeamHome, Bundle, State, GCS, CodeFile, RunUser, TVPNCommand, APIHost string
+	DryRun                                                                      bool
+	Wait                                                                        time.Duration
 }
 type installPlan struct {
 	SchemaVersion int    `json:"schemaVersion"`
@@ -38,9 +38,10 @@ type event struct {
 	ElapsedMS int64  `json:"elapsedMs"`
 }
 type installer struct {
-	opts options
-	run  func(context.Context, string, ...string) error
-	emit func(string)
+	opts             options
+	run              func(context.Context, string, ...string) error
+	emit             func(string)
+	pinBootstrapStop func()
 }
 
 const defaultUxsState = "/var/lib/somewear/uxs/mission-computer"
@@ -127,7 +128,8 @@ func execute(args []string) error {
 	flags.StringVar(&o.Bundle, "bundle", "", "Installation bundle (defaults to bundle beside the wizard)")
 	flags.StringVar(&o.State, "state", "", "Private UxS state directory (chosen automatically)")
 	flags.StringVar(&o.GCS, "gcs", "", "GCS HTTPS origin")
-	flags.StringVar(&o.CodeFile, "code-file", "", "Private claim file; omit to enter the code at the terminal")
+	flags.StringVar(&o.CodeFile, "code-file", "", "Advanced: private setup token file; default setup uses the API key and PIN")
+	flags.StringVar(&o.APIHost, "api-host", "", "Advanced: TVPN API host override; otherwise use TVPN production defaults")
 	flags.BoolVar(&o.DryRun, "dry-run", false, "Check prerequisites without redeeming the claim or changing services")
 	flags.DurationVar(&o.Wait, "wait-timeout", 20*time.Minute, "Maximum wait for paired setup readiness")
 	if err := flags.Parse(args[1:]); err != nil {
@@ -189,6 +191,11 @@ func execute(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	i := installer{opts: o, run: runCommand, emit: progressOutput()}
+	defer func() {
+		if i.pinBootstrapStop != nil {
+			i.pinBootstrapStop()
+		}
+	}()
 	if !o.DryRun && o.State != "" {
 		if err := validateTVPNState(o.State, "/var/lib/somewear/tvpn"); err != nil {
 			return err
@@ -200,10 +207,14 @@ func execute(args []string) error {
 		if _, err := os.Stat(filepath.Join(o.Bundle, "install.json")); err == nil {
 			claimBundle = filepath.Clean(o.State) + "-bundle"
 		}
-		selection, err := selectClaim(filepath.Join(claimBundle, ".claim-code"), o.CodeFile, secretClaimInput)
+		selection, err := selectSetup(filepath.Join(claimBundle, ".claim-code"), o.CodeFile, func() (bool, error) {
+			choice, err := promptChoice("This computer has an existing UxS setup", []menuOption{{"Continue the existing installation", "resume"}, {"Provision a different UxS account", "replace"}})
+			return choice == "replace", err
+		})
 		if err != nil {
 			return err
 		}
+
 		if selection.Replace {
 			choice, err := promptChoice("A new claim will replace this computer's existing UxS installation", []menuOption{{"Keep the existing installation and stop", "stop"}, {"Back up the existing installation and use the new claim", "replace"}})
 			if err != nil {
@@ -239,6 +250,13 @@ func execute(args []string) error {
 		}
 	}
 	if !o.DryRun && i.opts.CodeFile == "" {
+		if enteredCode == "" {
+			var err error
+			enteredCode, err = i.obtainPINClaim(ctx)
+			if err != nil {
+				return err
+			}
+		}
 		path, err := saveClaim(i.opts.Bundle, enteredCode)
 		if err != nil {
 			return err
@@ -414,7 +432,7 @@ func (i *installer) install(ctx context.Context) error {
 		defer stop()
 		i.emit("preparing-claim")
 		if err := i.claim(ctx, "--prepare-only"); err != nil {
-			return fmt.Errorf("claim preparation failed; preserve the original code and state to retry: %w", err)
+			return fmt.Errorf("setup could not be redeemed. If the code expired, extend its setup window in the GCS fleet manager, rerun setup, and press Enter to resume with the same code. If redemption already succeeded, press Enter to resume with the saved code. Installed software and state are preserved: %w", err)
 		}
 		if transport.Hostname != "" {
 			if err := validateTransportCredential(i.opts.State, transport); err != nil {

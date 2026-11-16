@@ -75,7 +75,10 @@ func (api *localAPI) request(ctx context.Context, method, path string, body, res
 	if result.StatusCode < 200 || result.StatusCode >= 300 {
 		return &localAPIError{path, result.StatusCode}
 	}
-	if response == nil || result.StatusCode == http.StatusNoContent {
+	if response == nil {
+		return nil
+	}
+	if result.StatusCode == http.StatusNoContent {
 		return nil
 	}
 	return json.NewDecoder(io.LimitReader(result.Body, 131072)).Decode(response)
@@ -119,7 +122,7 @@ type workspaceList struct {
 }
 
 func executeGCS(args []string) error {
-	flags := flag.NewFlagSet("setup --role gcs", flag.ContinueOnError)
+	flags := flag.NewFlagSet("setup", flag.ContinueOnError)
 	var o gcsOptions
 	flags.StringVar(&o.RunUser, "user", "", "Normal user account that runs Beam; defaults to the invoking sudo user")
 	flags.StringVar(&o.Bundle, "bundle", "", "Directory with install.json and Beam/TVPN packages, or HTTPS package sources")
@@ -127,7 +130,7 @@ func executeGCS(args []string) error {
 	flags.StringVar(&o.BeamProperties, "beam-properties", "", "Override the active Beam credential file for TVPN synchronization")
 	flags.StringVar(&o.AircraftName, "aircraft-name", "", "Optionally prepare a UxS identity and claim")
 	flags.StringVar(&o.UxsArtifact, "uxs-beam-artifact", "", "Target Linux Beam artifact to approve for the optional claim")
-	flags.StringVar(&o.ClaimOutput, "claim-output", "", "Private output file for the optional claim code")
+	flags.StringVar(&o.ClaimOutput, "claim-output", "", "Private output file for the optional setup code")
 	flags.BoolVar(&o.DryRun, "dry-run", false, "Verify both software packages without installing or authorizing")
 	flags.BoolVar(&o.NoBrowser, "no-browser", false, "Print authorization URLs without opening a browser")
 	flags.DurationVar(&o.Wait, "wait-timeout", 20*time.Minute, "Maximum setup and user authorization time after package installation")
@@ -603,7 +606,7 @@ func (i *gcsInstaller) prepareClaim(ctx context.Context) error {
 			if lookup := i.beam.request(ctx, "GET", "/api/uxs/provisioning/claim/status", nil, &existing); lookup != nil {
 				return lookup
 			}
-			return fmt.Errorf("a claim for %q is already pending; choose Resume a pending UxS claim in the wizard, or run grid-uxs-wizard resume-claim", existing.Name)
+			return fmt.Errorf("a claim for %q is already pending; choose Continue UxS provisioning in the wizard, or run grid-uxs-wizard resume-claim", existing.Name)
 		}
 		return err
 	}
@@ -655,6 +658,7 @@ func (i *gcsInstaller) awaitClaim(ctx context.Context, status claimStatus) error
 	}
 	var bootstrap struct {
 		Code       string         `json:"claimCode"`
+		Pin        string         `json:"pin"`
 		Credential claimBootstrap `json:"credential"`
 	}
 	if err := i.beam.request(ctx, "POST", "/api/uxs/provisioning/claim/bootstrap", map[string]string{"id": status.ID}, &bootstrap); err != nil {
@@ -662,6 +666,9 @@ func (i *gcsInstaller) awaitClaim(ctx context.Context, status claimStatus) error
 	}
 	if bootstrap.Code != status.Code || !apiKeyPattern.MatchString(bootstrap.Credential.APIKey) {
 		return errors.New("claim changed while preparing bootstrap; resume the current claim")
+	}
+	if _, err := normalizePIN(bootstrap.Pin); err != nil {
+		return errors.New("the running Beam does not support PIN setup; update Beam on this GCS")
 	}
 	if status.Port != 9445 {
 		return errors.New("TVPN claims require the GCS pairing listener on port 9445")
@@ -703,7 +710,7 @@ func (i *gcsInstaller) awaitClaim(ctx context.Context, status claimStatus) error
 		if out == nil {
 			out = os.Stdout
 		}
-		fmt.Fprintf(out, "\nClaim ready for %s.\n\nFirst, on the Linux mission computer, after extracting the complete UxS download, run:\n\n  sudo ./grid-uxs-wizard setup --role uxs\n\nAt the Claim code prompt:\nCopy this entire claim code:\n\n%s\n\nUxS API key:\n\n%s\n\nPaste the claim and API key at their corresponding hidden prompts. TVPN finds this GCS automatically; no LAN address or SSH tunnel is required.\nThe claim is short-lived; the API key remains a credential for this UxS.\n", i.opts.AircraftName, status.Code, bootstrap.Credential.APIKey)
+		fmt.Fprintf(out, "\nSetup PIN ready for %s.\n\nOn the Linux mission computer, run:\n\n  grid-uxs-wizard setup\n\nUxS API key:\n\n%s\n\nSetup PIN:\n\n%s-%s\n\nEnter the API key and PIN when prompted. The wizard then finds and verifies the GCS through TVPN.\nIf the PIN expires, extend its setup window on the GCS; keep the same PIN.\n", i.opts.AircraftName, bootstrap.Credential.APIKey, bootstrap.Pin[:3], bootstrap.Pin[3:])
 	}
 	i.emit("aircraft-claim-ready")
 	return nil

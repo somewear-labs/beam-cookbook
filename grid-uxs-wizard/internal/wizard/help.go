@@ -10,7 +10,7 @@ Setup asks whether the installation is a GCS or UxS mission computer and
 remembers that role. Later commands and menus use the installed role.
 
 After GCS setup:
-  provision-uxs      Provision a UxS and generate its setup code
+  provision-uxs      Provision a UxS and generate its setup PIN
   resume-claim       Continue UxS provisioning
 
 Run without arguments for guided setup or the installed role's task menu.
@@ -38,9 +38,9 @@ Enter the UxS API key created on the GCS with:
 
   grid-uxs-wizard provision-uxs
 
-Enter the setup code and API key from the GCS. The wizard connects through TVPN.
+Enter the API key and six-digit setup PIN first. The wizard then connects through TVPN and verifies the GCS.
 The wizard finds bundle/ beside its executable and selects managed state.
-An existing installation resumes its saved pairing with the saved setup code.
+An existing installation resumes its saved pairing without another PIN.
 
 Advanced options and prompt overrides:
 `
@@ -50,7 +50,7 @@ const claimUsage = `Run on the configured GCS with Beam signed in to the intende
   grid-uxs-wizard provision-uxs
 
 Enter a UxS name and approve with your Organization Admin account in the
-browser. The wizard displays a setup code and UxS API key, and saves a private
+browser. The wizard displays a setup PIN and UxS API key, and saves a private
 key copy. Enter both values in setup on the mission computer.
 
 Advanced options and prompt overrides:
@@ -63,7 +63,7 @@ Run without arguments to choose a task:
   grid-uxs-wizard
 
 Commands:
-  provision-uxs      Provision a UxS and generate its setup code
+  provision-uxs      Provision a UxS and generate its setup PIN
   resume-claim       Continue UxS provisioning
   setup              Set up Beam and TVPN using this installation's saved GCS role
 

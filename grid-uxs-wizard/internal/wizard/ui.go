@@ -135,9 +135,9 @@ func secretClaimInput(allowResume bool) (string, error) {
 	if err := requirePrompt(); err != nil {
 		return "", err
 	}
-	fmt.Fprintln(os.Stderr, "\nPaste the entire claim code from the GCS wizard. Input is hidden.")
+	fmt.Fprintln(os.Stderr, "\nPaste the entire setup code from the GCS. If the code expired, extend its setup window in the GCS fleet manager and keep the same code. Input is hidden.")
 	if allowResume {
-		fmt.Fprintln(os.Stderr, "Press Enter without a code to resume the saved installation.")
+		fmt.Fprintln(os.Stderr, "Press Enter without a code to resume the saved installation, including an interrupted acknowledgement.")
 	}
 	original, err := term.MakeRaw(int(os.Stdin.Fd()))
 	if err != nil {
@@ -149,7 +149,7 @@ func secretClaimInput(allowResume bool) (string, error) {
 		io.Writer
 	}{os.Stdin, os.Stderr}, "")
 	for {
-		value, err := console.ReadPassword("Claim code: ")
+		value, err := console.ReadPassword("Setup code: ")
 		if err != nil {
 			return "", fmt.Errorf("claim input cancelled: %w", err)
 		}
@@ -157,7 +157,7 @@ func secretClaimInput(allowResume bool) (string, error) {
 		if (value == "" && allowResume) || validClaimCode(value) {
 			return value, nil
 		}
-		fmt.Fprint(console, "Paste the complete claim code shown by the GCS.\n")
+		fmt.Fprint(console, "Paste the complete setup code shown by the GCS.\n")
 	}
 }
 
@@ -165,7 +165,7 @@ func secretAPIKeyInput(allowResume bool) (string, error) {
 	if err := requirePrompt(); err != nil {
 		return "", err
 	}
-	fmt.Fprintln(os.Stderr, "Paste only the UxS API key displayed by the GCS, not the claim code or file path. Input is hidden.")
+	fmt.Fprintln(os.Stderr, "Paste only the UxS API key displayed by the GCS, not the setup PIN or file path. Input is hidden.")
 	if allowResume {
 		fmt.Fprintln(os.Stderr, "Press Enter to reuse this installation's saved API key.")
 	}
@@ -193,7 +193,7 @@ func secretAPIKeyInput(allowResume bool) (string, error) {
 
 func apiKeyInputError(value string) error {
 	if strings.HasPrefix(value, "uxst1.") || strings.HasPrefix(value, "uxs1.") {
-		return errors.New("That is the claim code. Paste the separate value under UxS API key on the GCS.")
+		return errors.New("That is the setup code. Paste the separate value under UxS API key on the GCS.")
 	}
 	if strings.HasPrefix(value, "/") || strings.HasPrefix(value, "~/") || strings.Contains(value, "\\") {
 		return errors.New("That looks like a file path. Paste the API key itself, not the path.")
@@ -234,11 +234,14 @@ func progressLabel(phase string) string {
 		"installing-beam": "Installing Beam", "installing-tvpn": "Installing TVPN", "preflight": "Checking prerequisites",
 		"preflight-complete": "Prerequisites verified", "connecting-tvpn": "Connecting to the GCS through TVPN",
 		"reconnecting-tvpn": "Waiting for the managed TVPN link",
+		"discovering-gcs":   "Finding the GCS through TVPN",
+		"authorizing-pin":   "Confirming the setup PIN",
+		"waiting-for-gcs":   "Waiting for the GCS provisioning connection",
 		"preparing-claim":   "Redeeming your claim", "installing-service": "Starting the UxS service",
 		"acknowledging-claim": "Confirming enrollment", "waiting-for-paired-setup": "Waiting for paired setup", "ready": "UxS ready", "gcs-ready": "GCS ready",
 		"starting-beam": "Starting Beam", "configuring-networked-mode": "Configuring Networked UxS", "authorizing-gcs": "Authorizing the GCS",
 		"starting-tvpn": "Starting TVPN", "sharing-gcs-identity": "Configuring TVPN identity", "connecting-package-stream": "Connecting TVPN to Beam's package stream", "activating-tvpn": "Applying TVPN configuration", "selecting-tvpn-workspace": "Connecting TVPN to the Workspace",
-		"preparing-aircraft-claim": "Preparing your UxS claim", "aircraft-claim-ready": "Claim code ready",
+		"preparing-aircraft-claim": "Provisioning your UxS", "aircraft-claim-ready": "Setup PIN ready",
 		"runtime:starting": "Starting UxS setup", "runtime:starting-tvpn": "Starting TVPN", "runtime:selecting-workspace": "Connecting to the Workspace",
 		"runtime:starting-beam": "Starting UxS Beam", "runtime:delegating-package-stream": "Connecting Beam and TVPN",
 		"runtime:joining": "Linking the UxS to the GCS", "runtime:provisioning-horizon": "Configuring Horizon", "runtime:ready": "Services connected",
@@ -255,4 +258,30 @@ func progressOutput() func(string) {
 		out = os.Stdout
 	}
 	return newProgress(out, presentation.JSONProgress)
+}
+
+func secretPINInput() (string, error) {
+	if err := requirePrompt(); err != nil {
+		return "", err
+	}
+	original, err := term.MakeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		return "", err
+	}
+	defer term.Restore(int(os.Stdin.Fd()), original)
+	console := term.NewTerminal(struct {
+		io.Reader
+		io.Writer
+	}{os.Stdin, os.Stderr}, "")
+	for {
+		value, err := console.ReadPassword("GCS setup PIN: ")
+		if err != nil {
+			return "", errors.New("PIN input cancelled")
+		}
+		pin, err := normalizePIN(value)
+		if err == nil {
+			return pin, nil
+		}
+		fmt.Fprintln(console, err)
+	}
 }

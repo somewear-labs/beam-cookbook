@@ -70,6 +70,7 @@ func (i *gcsInstaller) runBeam(ctx context.Context, command string, args ...stri
 type rootTVPNOwner struct {
 	State      string `json:"state"`
 	IdentityID string `json:"identityId"`
+	Pending    bool   `json:"pending,omitempty"`
 }
 
 func ownedRootTVPN(state, canonical string) bool {
@@ -78,7 +79,7 @@ func ownedRootTVPN(state, canonical string) bool {
 		return false
 	}
 	var owner rootTVPNOwner
-	return json.Unmarshal(data, &owner) == nil && owner.State == state && numericID.MatchString(owner.IdentityID)
+	return json.Unmarshal(data, &owner) == nil && owner.State == state && (numericID.MatchString(owner.IdentityID) || (owner.Pending && owner.IdentityID == "" && validateOwnedState(state) == nil))
 }
 
 func rootTVPNService(command string) string {

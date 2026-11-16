@@ -29,7 +29,7 @@ func parseTransportClaim(value string) (transportClaim, error) {
 	}
 	var result transportClaim
 	if len(value) > 4096 || !strings.HasPrefix(value, "uxst1.") {
-		return result, errors.New("invalid claim code")
+		return result, errors.New("invalid setup code")
 	}
 	data, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(value, "uxst1."))
 	if err != nil {

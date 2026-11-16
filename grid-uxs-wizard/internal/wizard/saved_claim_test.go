@@ -75,3 +75,26 @@ func TestExplicitClaimSelectsReplacementWithoutOverwritingOldFile(t *testing.T) 
 		t.Fatal("selection overwrote prior credential")
 	}
 }
+
+func TestDefaultPINSetupDoesNotAskForLongToken(t *testing.T) {
+	saved := filepath.Join(t.TempDir(), ".claim-code")
+	selection, err := selectSetup(saved, "", func() (bool, error) { t.Fatal("fresh setup should not ask to resume"); return false, nil })
+	if err != nil || selection.Path != "" || selection.Code != "" || selection.Replace {
+		t.Fatalf("fresh PIN selection: %v", err)
+	}
+	if err := os.WriteFile(saved, []byte(testClaim("a")), 0600); err != nil {
+		t.Fatal(err)
+	}
+	selection, err = selectSetup(saved, "", func() (bool, error) { return false, nil })
+	if err != nil || selection.Path != saved || selection.Replace {
+		t.Fatalf("saved installation was not resumed: %v", err)
+	}
+	selection, err = selectSetup(saved, "", func() (bool, error) { return true, nil })
+	if err != nil || !selection.Replace || selection.Path != "" {
+		t.Fatalf("replacement was not explicit: %v", err)
+	}
+	data, _ := os.ReadFile(saved)
+	if string(data) != testClaim("a") {
+		t.Fatal("selection changed saved pairing input")
+	}
+}
