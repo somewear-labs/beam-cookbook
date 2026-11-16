@@ -1,21 +1,51 @@
 # Grid Networked UxS wizard
 
-One executable installs Beam and TVPN on a GCS or Linux mission computer.
-Run `grid-uxs-wizard setup` to choose and remember this computer's role.
-Setup requests administrator permission; Beam runs as the normal user and TVPN
-runs as a system service.
+One executable configures either a GCS or a UxS mission computer. Initial setup
+asks which role the installation serves and remembers the choice:
 
-On a configured GCS, `grid-uxs-wizard provision-uxs` provisions an aircraft;
-`grid-uxs-wizard resume-claim` continues an interrupted setup. Enter the UxS
-API key and six-digit setup PIN on the mission computer. The wizard discovers
-and verifies the GCS over TVPN before sending the PIN. Extending the setup
-window in the GCS fleet manager keeps the same PIN and identity. Saved
-installations can resume without entering another PIN.
+```sh
+grid-uxs-wizard setup
+```
 
-Run the wizard without arguments to choose from this installation's tasks.
+For a new mission computer, enter the API key shown by the GCS, then the six-digit
+setup PIN. The wizard discovers the pending GCS through TVPN and verifies its
+certificate before sending the PIN. A saved installation resumes without another
+PIN. Extending the setup window on the GCS keeps the same PIN and identity.
 
-The CLI entry point is in `cmd/grid-uxs-wizard/`. Implementation and tests live
-in `internal/wizard/`.
+On the configured GCS:
+
+```sh
+grid-uxs-wizard provision-uxs
+grid-uxs-wizard resume-claim
+```
+
+Run without arguments for initial setup or the installed role's task menu.
+Subsequent commands infer the role; no GCS/UxS prefix is required. Automated
+initial setup can supply `--role gcs` or `--role uxs`. A failed setup or dry run
+does not save a new role; a configured installation cannot switch roles here.
+
+| Directory | Responsibility |
+|---|---|
+| [`bootstrap/`](bootstrap/) | Download and install the wizard and its user PATH launcher. |
+| [`cmd/grid-uxs-wizard/`](cmd/grid-uxs-wizard/) | The single CLI entry point. |
+| [`internal/wizard/`](internal/wizard/) | GCS/UxS flows and shared package, service, configuration, and pairing implementation and tests. |
+
+The bootstrap selects the appropriate installation bundle, then invokes setup
+with that initial role. Both archives contain `grid-uxs-wizard` and its adjacent
+`grid-uxs-wizard.json` file-server configuration.
+
+Non-secret installation role metadata is stored separately in
+`/var/lib/grid-uxs-wizard/setup.json` on Linux,
+`/Library/Application Support/grid-uxs-wizard/setup.json` on macOS, or
+`%ProgramData%/grid-uxs-wizard/setup.json` on Windows. Initial setup
+writes it with elevated privileges; normal-user commands can read it. It holds
+no identity credentials or radio settings.
+
+The current target is the local installation. In a future remote flow, the
+wizard may run on a third computer: role and configuration must belong to the
+selected target installation, not the computer executing the wizard. Remote
+target selection and execution are not implemented here. UxS configuration
+continues to be managed by the GCS; Grid-managed storage is exploratory only.
 
 Build and test from this directory:
 
@@ -24,6 +54,15 @@ go build -o bin/grid-uxs-wizard ./cmd/grid-uxs-wizard
 go test ./...
 ```
 
-On Linux mission computers, `grid-uxs-wizard reset --backup` preserves a private
-backup before resetting local services and state. It leaves the GCS and backend
-identity unchanged. Omit `--backup` to reset without retaining a backup.
+See the [cookbook guide](../README.md) for installation and release layout.
+To check for software updates, run as your normal user:
+
+```sh
+grid-uxs-wizard update
+```
+
+The wizard compares installed Beam and TVPN checksums with `update-release.json`
+on the configured file server. Beam-only updates require no sudo. A TVPN update
+requests elevation for the system service. Updates currently support a macOS
+GCS and Linux mission computer with Beam JAR releases. Windows and native Beam
+updates are not implemented.

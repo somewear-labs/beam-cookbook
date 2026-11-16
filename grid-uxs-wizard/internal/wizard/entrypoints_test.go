@@ -137,7 +137,7 @@ func TestSavedRoleControlsMenuAndHelp(t *testing.T) {
 		}
 		want := "provision-uxs"
 		if role == "uxs" {
-			want = "uxs"
+			want = "update"
 		}
 		if len(*calls) != 1 || (*calls)[0][0] != want {
 			t.Fatalf("%s: %v", role, *calls)

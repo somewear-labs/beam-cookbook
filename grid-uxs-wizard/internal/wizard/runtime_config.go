@@ -13,18 +13,19 @@ import (
 )
 
 type runtimeConfig struct {
-	SchemaVersion int    `json:"schemaVersion"`
-	TVPNExternal  bool   `json:"tvpnExternal,omitempty"`
-	State         string `json:"state"`
-	Bundle        string `json:"bundle"`
-	ClaimID       string `json:"claimId"`
-	RequestID     string `json:"requestId"`
-	Beam          string `json:"beam"`
-	BeamFormat    string `json:"beamFormat"`
-	BeamHome      string `json:"beamHome,omitempty"`
-	BeamSHA256    string `json:"beamSha256"`
-	TVPN          string `json:"tvpn"`
-	TVPNSHA256    string `json:"tvpnSha256"`
+	SchemaVersion       int    `json:"schemaVersion"`
+	TVPNExternal        bool   `json:"tvpnExternal,omitempty"`
+	State               string `json:"state"`
+	Bundle              string `json:"bundle"`
+	ClaimID             string `json:"claimId"`
+	RequestID           string `json:"requestId"`
+	Beam                string `json:"beam"`
+	BeamFormat          string `json:"beamFormat"`
+	BeamHome            string `json:"beamHome,omitempty"`
+	BeamSHA256          string `json:"beamSha256"`
+	InstalledBeamSHA256 string `json:"installedBeamSha256,omitempty"`
+	TVPN                string `json:"tvpn"`
+	TVPNSHA256          string `json:"tvpnSha256"`
 }
 
 type claimBootstrap struct {
@@ -166,6 +167,27 @@ func prepareRuntime(o options) (installPlan, error) {
 			return installPlan{}, err
 		}
 		config.RequestID = previous.RequestID
+		if previous.InstalledBeamSHA256 != "" {
+			original := previous
+			original.Beam = config.Beam
+			original.BeamFormat = config.BeamFormat
+			original.BeamHome = config.BeamHome
+			original.InstalledBeamSHA256 = ""
+			if original != config || !uuidPattern.MatchString(previous.RequestID) {
+				return installPlan{}, errors.New("runtime configuration differs from the owned installation")
+			}
+			if err := previous.validate(); err != nil {
+				return installPlan{}, err
+			}
+			plan, err := readPlan(filepath.Join(o.State, "install-plan.json"))
+			if err != nil {
+				return installPlan{}, err
+			}
+			if plan.UnitName != "somewear-uxs-"+id+".service" {
+				return installPlan{}, errors.New("saved service belongs to another claim")
+			}
+			return plan, nil
+		}
 		if previous != config || !uuidPattern.MatchString(previous.RequestID) {
 			return installPlan{}, errors.New("runtime configuration differs from the owned installation")
 		}
@@ -266,7 +288,14 @@ func (c runtimeConfig) validate() error {
 			return err
 		}
 	}
-	for path, expected := range map[string]string{c.Beam: c.BeamSHA256, c.TVPN: c.TVPNSHA256} {
+	installedSHA := c.BeamSHA256
+	if c.InstalledBeamSHA256 != "" {
+		if !regexpSHA.MatchString(c.InstalledBeamSHA256) {
+			return errors.New("invalid installed Beam checksum")
+		}
+		installedSHA = c.InstalledBeamSHA256
+	}
+	for path, expected := range map[string]string{c.Beam: installedSHA, c.TVPN: c.TVPNSHA256} {
 		actual, err := fileDigest(path)
 		if err != nil || actual != expected {
 			return errors.New("runtime artifact no longer matches its approved checksum")
