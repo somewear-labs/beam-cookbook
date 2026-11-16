@@ -92,3 +92,20 @@ These commands require no sudo. Simulator files and flight state live under
 requires a `sitl-release.json` beside the file server's claim release, with a
 versioned package for the target platform and SHA-256 checksums for its binary,
 default parameters and license. This local release provides Linux ARM64.
+
+To provision a Horizon connected to the Linux mission computer:
+
+```sh
+grid-uxs-wizard horizon provision
+```
+
+Beam must already be running with the completed GCS–UxS pairing, and the GCS
+must have a radio profile for this UxS. The wizard synchronizes that profile
+through Beam, discovers attached Horizons and lets you select one if necessary.
+It displays the target identity, Workspace, radio settings and encryption
+fingerprint before asking permission to write. After confirmation it binds the
+selected serial to the GCS profile, rechecks the device and active account, then
+applies registration, encryption and radio settings through Beam's provisioning
+API and verifies the returned receipt. Encryption key material stays in Beam.
+Run as the normal Beam user; no sudo or firmware DFU is involved. This flow
+configures the UxS Horizon; GCS radio selection remains a separate operation.

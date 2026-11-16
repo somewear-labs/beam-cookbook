@@ -79,6 +79,9 @@ func execute(args []string) error {
 	if len(args) > 0 && args[0] == "reset" {
 		return executeReset(args[1:])
 	}
+	if len(args) > 0 && args[0] == "horizon" {
+		return executeHorizon(args[1:])
+	}
 	if len(args) > 0 && args[0] == "sitl" {
 		return executeSITL(args[1:])
 	}
