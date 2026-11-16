@@ -79,6 +79,9 @@ func execute(args []string) error {
 	if len(args) > 0 && args[0] == "reset" {
 		return executeReset(args[1:])
 	}
+	if len(args) > 0 && args[0] == "sitl" {
+		return executeSITL(args[1:])
+	}
 	if len(args) > 0 && args[0] == "update" {
 		return executeUpdate(args[1:])
 	}
