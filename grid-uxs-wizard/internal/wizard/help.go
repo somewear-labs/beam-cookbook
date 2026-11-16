@@ -14,6 +14,7 @@ After GCS setup:
   resume-claim       Continue UxS provisioning
 
 Run without arguments for guided setup or the installed role's task menu.
+Run grid-uxs-wizard update to compare this release and update Beam and TVPN as needed.
 Presentation options: --non-interactive, --json-progress.
 `
 
@@ -65,6 +66,7 @@ Run without arguments to choose a task:
 Commands:
   provision-uxs      Provision a UxS and generate its setup PIN
   resume-claim       Continue UxS provisioning
+  update             Check and update installed Beam and TVPN
   setup              Set up Beam and TVPN using this installation's saved GCS role
 
 Setup requests administrator permission for TVPN and system services. Provisioning commands run as your
@@ -79,6 +81,7 @@ Run without arguments to choose a task:
   grid-uxs-wizard
 
 Commands:
+  update             Check and update installed Beam and TVPN
   setup              Set up Beam and TVPN using this installation's saved UxS role
   reset              Reset this mission computer; --backup keeps a private backup (requests administrator permission)
   run                Supervise the installed UxS runtime (used by its service)

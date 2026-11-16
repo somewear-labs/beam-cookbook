@@ -35,3 +35,7 @@ func lockFile(path, label string) (func(), error) {
 func lockRuntime(state string) (func(), error) {
 	return lockFile(filepath.Join(state, "runner.lock"), "UxS runtime")
 }
+
+func lockUpdate(state string) (func(), error) {
+	return lockFile(filepath.Join(state, ".update.lock"), "UxS update")
+}

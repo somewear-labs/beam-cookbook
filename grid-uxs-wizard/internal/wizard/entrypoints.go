@@ -22,7 +22,13 @@ func Run(args []string) error {
 
 func (r wizardRunner) run(args []string) error {
 	args = presentationArgs(args)
+	if len(args) > 0 && args[0] == "__update-tvpn" {
+		return r.execute(args)
+	}
 	if len(args) > 0 && args[0] == "reset" {
+		return r.execute(args)
+	}
+	if len(args) > 0 && args[0] == "update" {
 		return r.execute(args)
 	}
 	if len(args) > 0 && args[0] == "run" {
@@ -56,7 +62,7 @@ func (r wizardRunner) run(args []string) error {
 		}
 		args = []string{action}
 	}
-	if args[0] == "reset" {
+	if args[0] == "update" || args[0] == "reset" {
 		return r.execute(args)
 	}
 	if args[0] == "setup" {
@@ -123,10 +129,11 @@ func roleTasks(role string) []menuOption {
 		return []menuOption{
 			{"Provision a UxS", "provision-uxs"},
 			{"Continue UxS provisioning", "resume-claim"},
+			{"Check for updates", "update"},
 			{"Set up this GCS", "setup"},
 		}
 	}
-	return []menuOption{{"Set up this mission computer", "setup"}, {"Reset this mission computer", "reset"}}
+	return []menuOption{{"Check for updates", "update"}, {"Set up this mission computer", "setup"}, {"Reset this mission computer", "reset"}}
 }
 
 func roleCommand(role string, args []string) ([]string, error) {

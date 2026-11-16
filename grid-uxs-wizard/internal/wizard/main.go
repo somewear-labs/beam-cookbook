@@ -50,6 +50,9 @@ var safePath = regexp.MustCompile(`^/[A-Za-z0-9_./-]+$`)
 var unitName = regexp.MustCompile(`^somewear-uxs-[0-9a-f-]{36}\.service$`)
 
 func execute(args []string) error {
+	if len(args) > 0 && args[0] == "__update-tvpn" {
+		return executeTVPNUpdate(args[1:])
+	}
 	args = presentationArgs(args)
 	if len(args) > 0 && os.Geteuid() != 0 && runtime.GOOS != "windows" && (args[0] == "uxs" || args[0] == "gcs" || args[0] == "reset") {
 		help := false
@@ -75,6 +78,9 @@ func execute(args []string) error {
 	}
 	if len(args) > 0 && args[0] == "reset" {
 		return executeReset(args[1:])
+	}
+	if len(args) > 0 && args[0] == "update" {
+		return executeUpdate(args[1:])
 	}
 	if len(args) > 0 && args[0] == "run" {
 		return executeRuntime(args[1:])
