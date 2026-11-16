@@ -7,21 +7,19 @@ Practical tools and examples for building on top of the [Somewear](https://somew
 ### [`grid-uxs-wizard/`](./grid-uxs-wizard) — Provision a Networked UxS
 
 A standalone Go reference installer for a Windows, macOS, or Linux GCS and a
-Linux mission computer. It installs Beam and TVPN and guides claim-code setup.
+Linux mission computer. It installs Beam and TVPN and guides API-key and PIN setup.
 Requires Beam's PLAT-291 claim preparation and acknowledgement support.
 The installer runs Beam in the normal user's scope and TVPN in a separate
 root service. Its Linux user runtime supervises Beam and uses TVPN's local API;
 Beam handles the identity and pairing exchange.
 
-Create a claim with `grid-uxs-wizard prepare-claim` on the GCS. After browser
-approval, the wizard displays a portable claim and the UxS API key, and saves a private
-key copy. On the Linux mission computer, run
-`sudo ./grid-uxs-wizard setup --role uxs` and enter both at the hidden prompts.
-The claim includes the GCS hostname and identity, Workspace, backend, and TLS
-pin. The wizard starts TVPN with the UxS key, finds the matching GCS peer, and
-redeems the claim on port 9445. Pairing continues to use Beam's existing pinned
-HTTPS authentication. This requires the local Beam claim-bootstrap export API;
-no backend or TVPN source changes are required.
+Run `grid-uxs-wizard setup` on each computer and select its role. On the
+configured GCS, run `grid-uxs-wizard provision-uxs` and approve in the browser.
+Enter the displayed UxS API key and six-digit setup PIN on the mission computer.
+The wizard discovers the GCS over TVPN, verifies the API-key proof and TLS
+certificate, then redeems the setup on port 9445. Saved installations resume
+their pairing; an expired setup window can be extended in the GCS fleet manager.
+No SSH tunnel, backend changes, or TVPN request-signing changes are required.
 
 ```sh
 cd grid-uxs-wizard

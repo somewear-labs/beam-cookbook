@@ -71,7 +71,7 @@ func executePrepareClaim(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "Preparing %s in GCS Beam's active Workspace.\nApprove with your Organization Admin account in the browser; this wizard will wait and show the setup code.\n", o.AircraftName)
+	fmt.Fprintf(os.Stderr, "Preparing %s in GCS Beam's active Workspace.\nApprove with your Organization Admin account in the browser; this wizard will wait and show the setup PIN.\n", o.AircraftName)
 	i := gcsInstaller{opts: o, beam: beam, emit: progressOutput(), authorize: func(link string) {
 		fmt.Fprintln(os.Stderr, "Approve the new UxS here:", link)
 		if !o.NoBrowser {

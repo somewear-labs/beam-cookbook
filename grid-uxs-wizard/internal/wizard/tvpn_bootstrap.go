@@ -2,14 +2,12 @@ package wizard
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"net/url"
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
 )
 
@@ -54,6 +52,9 @@ func validateTransportCredential(state string, claim transportClaim) error {
 }
 
 func (i *installer) bootstrapTVPN(ctx context.Context, claim transportClaim) (func(), error) {
+	if i.pinBootstrapStop != nil {
+		return i.pinBootstrapStop, nil
+	}
 	if _, err := os.Lstat(filepath.Join(i.opts.State, "claimed-bootstrap.json")); err == nil {
 		if err := validateTransportCredential(i.opts.State, claim); err != nil {
 			return nil, err
@@ -67,85 +68,17 @@ func (i *installer) bootstrapTVPN(ctx context.Context, claim transportClaim) (fu
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	if _, err := os.Lstat(i.opts.State); errors.Is(err, os.ErrNotExist) {
-		if err := checkInstallParents(i.opts.State); err != nil {
-			return nil, err
-		}
-		if err := os.MkdirAll(i.opts.State, 0700); err != nil {
-			return nil, err
-		}
-		if err := atomicPrivateWrite(filepath.Join(i.opts.State, "owner"), []byte("uxs-install-v1\n")); err != nil {
-			return nil, err
-		}
-	} else if err != nil {
+	if err := i.prepareBootstrapState(); err != nil {
 		return nil, err
 	}
-	if err := validateOwnedState(i.opts.State); err != nil {
-		return nil, err
-	}
-	keyFile := filepath.Join(i.opts.State, "bootstrap-api-key")
-	key := ""
-	if _, err := os.Lstat(keyFile); err == nil {
-		if err := checkCodeFile(keyFile); err != nil {
-			return nil, err
-		}
-		data, err := os.ReadFile(keyFile)
-		if err != nil {
-			return nil, err
-		}
-		key = string(data)
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return nil, err
-	}
-	value, err := secretAPIKeyInput(key != "")
+	key, err := i.bootstrapAPIKey()
 	if err != nil {
 		return nil, err
 	}
-	if value != "" {
-		key = value
-	}
-	if !apiKeyPattern.MatchString(key) {
-		return nil, errors.New("invalid UxS API key")
-	}
-	if err := atomicPrivateWrite(keyFile, []byte(key)); err != nil {
-		return nil, err
-	}
-	api, _ := newLocalAPI("http://127.0.0.1:9094")
-	if api.request(ctx, "GET", "/api/health", nil, nil) == nil {
-		return nil, errors.New("TVPN is already running; stop the existing installation before bootstrap")
-	}
-	dir := "/var/lib/somewear/tvpn"
-	if _, err := os.Lstat(dir); errors.Is(err, os.ErrNotExist) {
-		if err := os.MkdirAll(dir, 0700); err != nil {
-			return nil, err
-		}
-	} else if !ownedRootTVPN(i.opts.State, dir) {
-		return nil, errors.New("TVPN belongs to another installation; migrate it before setup")
-	}
-	if err := writePrivateJSON(filepath.Join(dir, "uxs-owner.json"), rootTVPNOwner{i.opts.State, claim.IdentityID}); err != nil {
-		return nil, err
-	}
-	path := filepath.Join(dir, "config.toml")
-	encodedKey, _ := json.Marshal(key)
-	encodedHost, _ := json.Marshal(claim.Backend)
-	content := fmt.Sprintf("[api]\nkey = %s\nhost = %s\n\n[package-stream]\nowner = \"tvpn\"\n", encodedKey, encodedHost)
-	if err := atomicPrivateWrite(path, []byte(content)); err != nil {
-		return nil, err
-	}
-	i.emit("connecting-tvpn")
-	command := i.opts.TVPNCommand
-	if command == "" {
-		return nil, errors.New("TVPN bootstrap requires the installed root-owned system package")
-	}
-	if err := requireRootExecutable(command); err != nil {
-		return nil, err
-	}
-	process, err := startRuntimeProcess(command, nil, map[string]string{"CONFIG_PATH": path}, filepath.Join(i.opts.State, "tvpn-bootstrap.log"))
+	api, process, stop, err := i.startBootstrapTVPN(ctx, key, claim.Backend, claim.IdentityID)
 	if err != nil {
-		return nil, errors.New("could not start TVPN bootstrap; inspect the private bootstrap log")
+		return nil, err
 	}
-	var once sync.Once
-	stop := func() { once.Do(process.Stop) }
 	ready := false
 	defer func() {
 		if !ready {
@@ -155,6 +88,10 @@ func (i *installer) bootstrapTVPN(ctx context.Context, claim transportClaim) (fu
 	waitCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	if err := connectBootstrapPeer(waitCtx, api, claim, process.Exited, func(address string) { i.opts.GCS = address }); err != nil {
+		return nil, err
+	}
+	i.emit("waiting-for-gcs")
+	if err := waitForClaimTransport(waitCtx, i.opts.GCS); err != nil {
 		return nil, err
 	}
 	ready = true
@@ -246,7 +183,7 @@ func waitForClaimTransport(ctx context.Context, origin string) error {
 		return true, nil
 	})
 	if err != nil {
-		return errors.New("UxS service started but TVPN has not reconnected; retry using the original claim and state")
+		return errors.New("GCS provisioning connection is not reachable through TVPN; retry using the saved setup code and state")
 	}
 	return nil
 }

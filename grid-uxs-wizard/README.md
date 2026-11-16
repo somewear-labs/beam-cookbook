@@ -6,7 +6,12 @@ Setup requests administrator permission; Beam runs as the normal user and TVPN
 runs as a system service.
 
 On a configured GCS, `grid-uxs-wizard provision-uxs` provisions an aircraft;
-`grid-uxs-wizard resume-claim` continues an interrupted setup.
+`grid-uxs-wizard resume-claim` continues an interrupted setup. Enter the UxS
+API key and six-digit setup PIN on the mission computer. The wizard discovers
+and verifies the GCS over TVPN before sending the PIN. Extending the setup
+window in the GCS fleet manager keeps the same PIN and identity. Saved
+installations can resume without entering another PIN.
+
 Run the wizard without arguments to choose from this installation's tasks.
 
 The CLI entry point is in `cmd/grid-uxs-wizard/`. Implementation and tests live

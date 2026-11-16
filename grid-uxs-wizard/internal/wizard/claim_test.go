@@ -24,7 +24,7 @@ func serveBootstrap(t *testing.T, w http.ResponseWriter, r *http.Request) bool {
 	if json.NewDecoder(r.Body).Decode(&request) != nil || request.ID != "11111111-1111-1111-1111-111111111111" {
 		t.Error("bootstrap must bind the displayed claim")
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"claimCode": testRawClaim(), "credential": map[string]string{"apiKey": "testkey:secret", "backend": "api.somewear.co", "workspaceId": "75605", "gcsIdentityId": "298002", "identityId": "351092"}})
+	_ = json.NewEncoder(w).Encode(map[string]any{"pin": "123456", "claimCode": testRawClaim(), "credential": map[string]string{"apiKey": "testkey:secret", "backend": "api.somewear.co", "workspaceId": "75605", "gcsIdentityId": "298002", "identityId": "351092"}})
 	return true
 }
 func TestClaimGuidesApprovalAndDisplaysOnlyReadyCode(t *testing.T) {
@@ -57,7 +57,7 @@ func TestClaimGuidesApprovalAndDisplaysOnlyReadyCode(t *testing.T) {
 			i := gcsInstaller{opts: gcsOptions{AircraftName: "Test craft", UxsArtifact: "/beam.jar"}, beam: api, emit: func(string) {}, claimOutput: &output, authorize: func(link string) { approved = link == "https://somewear.app/approve" }}
 			err := i.prepareClaim(context.Background())
 			if phase != "Available" {
-				if err == nil || strings.Contains(output.String(), "uxst1.") || strings.Contains(output.String(), "testkey:secret") {
+				if err == nil || strings.Contains(output.String(), "Setup PIN:") || strings.Contains(output.String(), "testkey:secret") {
 					t.Fatal("failed authorization exposed a code")
 				}
 				return
@@ -68,7 +68,7 @@ func TestClaimGuidesApprovalAndDisplaysOnlyReadyCode(t *testing.T) {
 			if !strings.Contains(output.String(), "\n\nUxS API key:\n\ntestkey:secret\n\n") {
 				t.Fatal("ready claim must display the UxS API key on its own line")
 			}
-			for _, text := range []string{"Test craft", "Copy this entire claim code:", "uxst1.", "Paste the claim", "API key", "\n\n  sudo ./grid-uxs-wizard setup --role uxs\n\n"} {
+			for _, text := range []string{"Test craft", "Setup PIN:", "123-456", "Enter the API key", "API key", "\n\n  grid-uxs-wizard setup\n\n"} {
 				if !strings.Contains(output.String(), text) {
 					t.Errorf("missing guidance %q", text)
 				}
@@ -99,10 +99,10 @@ func TestResumePendingClaimNeverCreatesAnotherAccount(t *testing.T) {
 			i := gcsInstaller{beam: api, emit: func(string) {}, authorize: func(string) { t.Fatal("unexpected approval") }, claimOutput: &output}
 			err := i.resumeClaim(context.Background())
 			if phase == "Available" {
-				if err != nil || !strings.Contains(output.String(), "existing-uxs") || !strings.Contains(output.String(), "uxst1.") {
+				if err != nil || !strings.Contains(output.String(), "existing-uxs") || !strings.Contains(output.String(), "Setup PIN:") {
 					t.Fatalf("resume: %v %s", err, output.String())
 				}
-			} else if err == nil || strings.Contains(output.String(), "uxst1.") {
+			} else if err == nil || strings.Contains(output.String(), "Setup PIN:") {
 				t.Fatalf("unusable claim exposed as available: %v", err)
 			}
 		})

@@ -52,7 +52,29 @@ func selectClaim(saved, supplied string, input func(bool) (string, error)) (clai
 		return claimSelection{Path: saved}, nil
 	}
 	if !validClaimCode(value) {
-		return claimSelection{}, errors.New("paste the entire claim code from the GCS")
+		return claimSelection{}, errors.New("paste the entire setup code from the GCS")
 	}
 	return claimSelection{Code: value, Replace: previous != ""}, nil
+}
+
+func selectSetup(saved, supplied string, replace func() (bool, error)) (claimSelection, error) {
+	if supplied != "" {
+		return selectClaim(saved, supplied, func(bool) (string, error) { return "", errors.New("explicit setup file is required") })
+	}
+	if _, err := os.Lstat(saved); errors.Is(err, os.ErrNotExist) {
+		return claimSelection{}, nil
+	} else if err != nil {
+		return claimSelection{}, err
+	}
+	if err := checkCodeFile(saved); err != nil {
+		return claimSelection{}, err
+	}
+	choice, err := replace()
+	if err != nil {
+		return claimSelection{}, err
+	}
+	if choice {
+		return claimSelection{Replace: true}, nil
+	}
+	return claimSelection{Path: saved}, nil
 }

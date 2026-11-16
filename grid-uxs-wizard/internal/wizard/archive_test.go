@@ -245,3 +245,36 @@ func TestUserServiceDirectoryRejectsSymlinkWithoutChangingTarget(t *testing.T) {
 		t.Fatal("symlink target changed")
 	}
 }
+
+func TestResetArchivesInterruptedSetupWithoutClaimBundle(t *testing.T) {
+	state, bundle, canonical, units, backups, account := rootTVPNArchiveFixture(t)
+	if err := os.RemoveAll(bundle); err != nil {
+		t.Fatal(err)
+	}
+	if err := writePrivateJSON(filepath.Join(canonical, "uxs-owner.json"), rootTVPNOwner{State: state, Pending: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(state, "bootstrap-api-key"), []byte("private-key"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	backup, err := archiveManagedInstallation(context.Background(), state, bundle, canonical, units, backups, account, func(context.Context, string, ...string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{state, canonical} {
+		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("installation was not reset")
+		}
+	}
+	value, err := os.ReadFile(filepath.Join(backup, "state/bootstrap-api-key"))
+	if err != nil || string(value) != "private-key" {
+		t.Fatal("bootstrap credential was not backed up")
+	}
+	var manifest archivedInstallation
+	if err := readPrivateJSON(filepath.Join(backup, "reset.json"), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Moved) != 2 {
+		t.Fatal("unexpected archive paths")
+	}
+}
