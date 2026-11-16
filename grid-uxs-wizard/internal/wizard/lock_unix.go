@@ -39,3 +39,7 @@ func lockRuntime(state string) (func(), error) {
 func lockUpdate(state string) (func(), error) {
 	return lockFile(filepath.Join(state, ".update.lock"), "UxS update")
 }
+
+func lockSITL(root string) (func(), error) {
+	return lockFile(filepath.Join(root, ".install.lock"), "SITL installation")
+}

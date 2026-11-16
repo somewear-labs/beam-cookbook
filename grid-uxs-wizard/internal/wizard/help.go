@@ -83,6 +83,7 @@ Run without arguments to choose a task:
 Commands:
   update             Check and update installed Beam and TVPN
   setup              Set up Beam and TVPN using this installation's saved UxS role
+  sitl               Install and manage the optional ArduCopter simulator
   reset              Reset this mission computer; --backup keeps a private backup (requests administrator permission)
   run                Supervise the installed UxS runtime (used by its service)
 

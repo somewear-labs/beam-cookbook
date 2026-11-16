@@ -133,7 +133,7 @@ func roleTasks(role string) []menuOption {
 			{"Set up this GCS", "setup"},
 		}
 	}
-	return []menuOption{{"Check for updates", "update"}, {"Set up this mission computer", "setup"}, {"Reset this mission computer", "reset"}}
+	return []menuOption{{"Check for updates", "update"}, {"Set up this mission computer", "setup"}, {"Manage simulator", "sitl"}, {"Reset this mission computer", "reset"}}
 }
 
 func roleCommand(role string, args []string) ([]string, error) {
@@ -144,6 +144,10 @@ func roleCommand(role string, args []string) ([]string, error) {
 		return nil, errors.New("missing command")
 	}
 	switch args[0] {
+	case "sitl":
+		if role == "uxs" {
+			return args, nil
+		}
 	case "provision-uxs", "resume-claim":
 		if role == "gcs" {
 			return args, nil

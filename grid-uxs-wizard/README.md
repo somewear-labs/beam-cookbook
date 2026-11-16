@@ -66,3 +66,29 @@ on the configured file server. Beam-only updates require no sudo. A TVPN update
 requests elevation for the system service. Updates currently support a macOS
 GCS and Linux mission computer with Beam JAR releases. Windows and native Beam
 updates are not implemented.
+
+On a configured Linux mission computer, install the optional ArduCopter simulator
+as your normal user:
+
+```sh
+grid-uxs-wizard sitl install
+```
+
+The wizard downloads and verifies the simulator from the configured file server,
+then enables a persistent user service. Defaults send MAVLink to local Beam on
+UDP port 14550, with system ID 1. Set `--sysid` and `--home LAT,LON,ALT,YAW` when
+installing additional test aircraft.
+
+```sh
+grid-uxs-wizard sitl status
+grid-uxs-wizard sitl stop
+grid-uxs-wizard sitl start
+grid-uxs-wizard sitl restart
+grid-uxs-wizard sitl logs
+```
+
+These commands require no sudo. Simulator files and flight state live under
+`~/.local/share/grid-uxs-wizard/sitl`; Beam and TVPN remain unchanged. Installation
+requires a `sitl-release.json` beside the file server's claim release, with a
+versioned package for the target platform and SHA-256 checksums for its binary,
+default parameters and license. This local release provides Linux ARM64.
