@@ -75,7 +75,7 @@ func (api *localAPI) request(ctx context.Context, method, path string, body, res
 	if result.StatusCode < 200 || result.StatusCode >= 300 {
 		return &localAPIError{path, result.StatusCode}
 	}
-	if response == nil {
+	if response == nil || result.StatusCode == http.StatusNoContent {
 		return nil
 	}
 	return json.NewDecoder(io.LimitReader(result.Body, 131072)).Decode(response)
@@ -233,7 +233,15 @@ func (i *gcsInstaller) configure(ctx context.Context, beamCommand, tvpnCommand s
 	var configuration struct {
 		RequiresRestart bool `json:"requiresRestart"`
 	}
-	if err := i.beam.request(ctx, "POST", "/api/properties", map[string]any{"updates": map[string]string{"uxs-solution": "networked"}, "target": "user"}, &configuration); err != nil {
+	updates := map[string]string{"uxs-solution": "networked"}
+	release, err := configuredClaimRelease("", "", "")
+	if err != nil {
+		return err
+	}
+	if release != "" {
+		updates["uxs-provisioning-release-url"] = release
+	}
+	if err := i.beam.request(ctx, "POST", "/api/properties", map[string]any{"updates": updates, "target": "user"}, &configuration); err != nil {
 		return err
 	}
 	if configuration.RequiresRestart {
